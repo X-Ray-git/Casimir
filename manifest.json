@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Casimir",
+  "description": "Focused arXiv and ChatGPT workflows for Chrome Split View.",
+  "version": "0.4.1",
+  "minimum_chrome_version": "140",
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "32": "assets/icons/icon-32.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  },
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://arxiv.org/*",
+    "https://chatgpt.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/arxiv-split-view.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://arxiv.org/abs/*"
+      ],
+      "js": [
+        "src/content/arxiv-first-visit.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "src/content/chatgpt-shortcuts.js",
+        "src/content/chatgpt-pdf-upload.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

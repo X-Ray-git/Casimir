@@ -1,0 +1,13 @@
+.DS_Store
+.idea/
+.vscode/
+
+node_modules/
+coverage/
+dist/
+
+*.log
+*.zip
+
+# Optional local Chrome profile used during manual testing.
+.chrome-profile/

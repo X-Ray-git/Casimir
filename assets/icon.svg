@@ -1,0 +1,46 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="1024"
+  height="1024"
+  viewBox="0 0 1024 1024"
+>
+  <defs>
+    <linearGradient id="background" x1="176" y1="128" x2="864" y2="896" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A3BEFB"/>
+      <stop offset="0.42" stop-color="#6F90D7"/>
+      <stop offset="1" stop-color="#5477C4"/>
+    </linearGradient>
+    <linearGradient id="highlight" x1="512" y1="64" x2="512" y2="576" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect
+    x="64"
+    y="64"
+    width="896"
+    height="896"
+    rx="208"
+    fill="url(#background)"
+  />
+  <rect
+    x="65"
+    y="65"
+    width="894"
+    height="894"
+    rx="207"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-opacity="0.18"
+    stroke-width="2"
+  />
+  <path
+    d="M64 272C64 157.1 157.1 64 272 64H752C866.9 64 960 157.1 960 272V512H64V272Z"
+    fill="url(#highlight)"
+  />
+
+  <path d="M280 254L448 322V702L280 770V254Z" fill="#FFFFFF"/>
+  <path d="M744 254L576 322V474H744V254Z" fill="#FFFFFF"/>
+  <path d="M576 558H744V770L576 702V558Z" fill="#FFFFFF"/>
+</svg>
