@@ -5,6 +5,8 @@
 Casimir 是一个个人使用的 Chrome Manifest V3 扩展，为 arXiv 与 ChatGPT 提供明确触发、
 范围受限的工作流增强。
 
+项目以 MIT License 开源。
+
 ## 已实现
 
 - 首次访问 arXiv 摘要页时跳转到对应 PDF，并按论文 ID 记录访问状态。

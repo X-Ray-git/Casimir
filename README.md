@@ -120,3 +120,7 @@ Casimir/
 - [故障排查](docs/operations/troubleshooting.md)
 - [当前状态](docs/status/current.md)
 - [变更记录](CHANGELOG.md)
+
+## 许可证
+
+Casimir 采用 [MIT License](LICENSE) 开源许可证。

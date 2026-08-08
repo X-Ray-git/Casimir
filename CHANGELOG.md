@@ -15,6 +15,9 @@ were developed under the ChatFlow name.
   maintenance-oriented documentation index.
 - Add a macOS-style rounded Casimir icon and the standard Chrome extension icon
   sizes.
+- Adopt the MIT License for the independent public repository.
+- Align the extension, package, and GitHub descriptions with Casimir's focused
+  arXiv and ChatGPT positioning.
 
 ## [0.4.1] - 2026-07-25
 

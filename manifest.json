@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Casimir",
-  "description": "Focused arXiv and ChatGPT workflows for Chrome Split View.",
+  "description": "A focused Chrome extension connecting arXiv reading with ChatGPT workflows.",
   "version": "0.4.1",
   "minimum_chrome_version": "140",
   "icons": {
