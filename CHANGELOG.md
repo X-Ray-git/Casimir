@@ -19,6 +19,11 @@ were developed under the ChatFlow name.
 - Align the extension, package, and GitHub descriptions with Casimir's focused
   arXiv and ChatGPT positioning.
 
+### Fixed
+
+- Restore `Cmd/Ctrl+Shift+N` on the current Chinese ChatGPT UI by recognizing
+  its neutral `临时聊天` and `临时对话` button labels.
+
 ## [0.4.1] - 2026-07-25
 
 ### Fixed

@@ -125,6 +125,8 @@
     return firstVisible([
       '[data-testid="temporary-chat-button"]',
       '[aria-label="Temporary chat"]',
+      '[aria-label="临时聊天"]',
+      '[aria-label="临时对话"]',
       '[aria-label="Turn on temporary chat"]',
       '[aria-label="Turn off temporary chat"]',
       '[aria-label="开启临时聊天"]',

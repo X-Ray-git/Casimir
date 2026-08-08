@@ -39,6 +39,7 @@ async function createHarness({
   href = "https://chatgpt.com/c/existing-chat",
   customShortcuts = [],
   newChatButtons = [],
+  temporaryChatButtons = [],
   promptInput = null,
   clipboardText = "",
 } = {}) {
@@ -69,6 +70,23 @@ async function createHarness({
     }),
   );
 
+  const temporaryButtonElements = temporaryChatButtons.map(
+    ({ id, ariaLabel, inert = false, visible = true }) => ({
+      ariaLabel,
+      element: {
+        closest(selector) {
+          return selector === "[inert]" && inert ? {} : null;
+        },
+        getClientRects() {
+          return visible ? [{}] : [];
+        },
+        click() {
+          clicks.push(id);
+        },
+      },
+    }),
+  );
+
   const document = {
     addEventListener(type, listener) {
       listeners.set(type, listener);
@@ -81,7 +99,9 @@ async function createHarness({
       if (selector === '[data-testid="create-new-chat-button"][href="/"]') {
         return buttonElements;
       }
-      return [];
+      return temporaryButtonElements
+        .filter(({ ariaLabel }) => selector === `[aria-label="${ariaLabel}"]`)
+        .map(({ element }) => element);
     },
   };
 
@@ -195,6 +215,35 @@ test("Cmd+O does not navigate when already on a new chat page", async () => {
 
   assert.deepEqual(harness.clicks, []);
   assert.deepEqual(harness.navigations, []);
+});
+
+test("Cmd+Shift+N clicks ChatGPT's current Chinese temporary chat button", async () => {
+  const harness = await createHarness({
+    temporaryChatButtons: [
+      { id: "temporary-chat", ariaLabel: "临时聊天" },
+    ],
+  });
+
+  const event = harness.keydown({
+    shiftKey: true,
+    code: "KeyN",
+    key: "N",
+  });
+
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(harness.clicks, ["temporary-chat"]);
+});
+
+test("Cmd+Shift+N supports the neutral Chinese temporary conversation label", async () => {
+  const harness = await createHarness({
+    temporaryChatButtons: [
+      { id: "temporary-conversation", ariaLabel: "临时对话" },
+    ],
+  });
+
+  harness.keydown({ shiftKey: true, code: "KeyN", key: "N" });
+
+  assert.deepEqual(harness.clicks, ["temporary-conversation"]);
 });
 
 test("a custom new-chat shortcut stores its prompt before navigation", async () => {
