@@ -115,3 +115,64 @@ test("injects the transferred PDF into ChatGPT's file input without sending", as
   assert.deepEqual(dispatchedEvents, ["input", "change"]);
   assert.equal(disconnected, true);
 });
+
+test("automatically hides a PDF fetch error after five seconds", () => {
+  const onMessage = eventChannel();
+  const timers = [];
+  const sentMessages = [];
+  let removed = false;
+  const statusHost = {
+    id: "",
+    style: {},
+    textContent: "",
+    remove() {
+      removed = true;
+    },
+  };
+  const port = {
+    onMessage,
+    postMessage(message) {
+      sentMessages.push(message);
+    },
+    disconnect() {},
+  };
+
+  vm.runInNewContext(source, {
+    atob,
+    chrome: { runtime: { connect: () => port } },
+    console: { log() {}, error() {} },
+    document: {
+      documentElement: { appendChild() {} },
+      createElement() {
+        return statusHost;
+      },
+    },
+    Uint8Array,
+    window: {
+      setTimeout(callback, delay) {
+        timers.push({ callback, delay });
+      },
+    },
+  });
+
+  assert.equal(sentMessages[0].type, "claim");
+
+  onMessage.emit({
+    type: "error",
+    message:
+      "Error: PDF exceeds Casimir's 100 MB automatic transfer limit",
+  });
+
+  assert.equal(
+    statusHost.textContent,
+    "PDF 获取失败：Error: PDF exceeds Casimir's 100 MB automatic transfer limit",
+  );
+  assert.equal(statusHost.style.background, "#b91c1c");
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 5000);
+  assert.equal(removed, false);
+
+  timers[0].callback();
+
+  assert.equal(removed, true);
+});

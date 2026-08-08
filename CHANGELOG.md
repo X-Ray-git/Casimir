@@ -18,11 +18,15 @@ were developed under the ChatFlow name.
 - Adopt the MIT License for the independent public repository.
 - Align the extension, package, and GitHub descriptions with Casimir's focused
   arXiv and ChatGPT positioning.
+- Raise Casimir's automatic PDF transfer limit from 50 MB to 100 MB and clarify
+  that it is separate from ChatGPT's file limit.
 
 ### Fixed
 
 - Restore `Cmd/Ctrl+Shift+N` on the current Chinese ChatGPT UI by recognizing
   its neutral `临时聊天` and `临时对话` button labels.
+- Automatically dismiss PDF fetch and attachment error messages after five
+  seconds instead of leaving them permanently over the ChatGPT page.
 
 ## [0.4.1] - 2026-07-25
 

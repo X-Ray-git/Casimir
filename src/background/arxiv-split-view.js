@@ -6,7 +6,8 @@ const RETRY_DELAYS_MS = [0, 80, 200, 500, 1000, 2000];
 const PDF_UPLOAD_PORT = "casimir-pdf-upload";
 const PDF_TASK_PREFIX = "pendingPdfUpload:";
 const PDF_TASK_TTL_MS = 2 * 60 * 1000;
-const MAX_PDF_BYTES = 50 * 1024 * 1024;
+const MAX_PDF_MIB = 100;
+const MAX_PDF_BYTES = MAX_PDF_MIB * 1024 * 1024;
 
 // tabId -> { createdAt, windowId, initialUrl, seenSplitViewId, processed }
 const recentTabs = new Map();
@@ -132,6 +133,12 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+function pdfSizeLimitError() {
+  return new Error(
+    `PDF exceeds Casimir's ${MAX_PDF_MIB} MB automatic transfer limit`,
+  );
+}
+
 async function transferPdf(port, targetTabId, task) {
   try {
     port.postMessage({ type: "status", status: "fetching" });
@@ -143,7 +150,7 @@ async function transferPdf(port, targetTabId, task) {
 
     const contentLength = Number(response.headers.get("content-length") || 0);
     if (contentLength > MAX_PDF_BYTES) {
-      throw new Error("PDF exceeds Casimir's 50 MB transfer limit");
+      throw pdfSizeLimitError();
     }
 
     const contentType = response.headers.get("content-type") || "application/pdf";
@@ -167,7 +174,7 @@ async function transferPdf(port, targetTabId, task) {
         totalBytes += value.byteLength;
         if (totalBytes > MAX_PDF_BYTES) {
           await reader.cancel();
-          throw new Error("PDF exceeds Casimir's 50 MB transfer limit");
+          throw pdfSizeLimitError();
         }
         port.postMessage({ type: "chunk", data: bytesToBase64(value) });
       }
@@ -175,7 +182,7 @@ async function transferPdf(port, targetTabId, task) {
       const bytes = new Uint8Array(await response.arrayBuffer());
       totalBytes = bytes.byteLength;
       if (totalBytes > MAX_PDF_BYTES) {
-        throw new Error("PDF exceeds Casimir's 50 MB transfer limit");
+        throw pdfSizeLimitError();
       }
       port.postMessage({ type: "chunk", data: bytesToBase64(bytes) });
     }

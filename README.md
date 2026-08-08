@@ -53,8 +53,9 @@ ChatGPT 标签页，使新的内容脚本生效。
 5. 等待 Casimir 状态提示，并确认 PDF 出现在 ChatGPT 附件区域。
 6. 确认原始 PDF 窗格及 URL 未改变，Casimir 没有填写提示词或发送消息。
 
-Casimir 只在内存中获取并传递 PDF，不写入下载目录。文件上限为 50 MB，目标
-ChatGPT 页面在两分钟内未领取任务时，任务会过期。
+Casimir 只在内存中获取并传递 PDF，不写入下载目录。Casimir 当前的自动传输
+上限为 100 MB（并非 ChatGPT 的文件上限）；目标 ChatGPT 页面在两分钟内未
+领取任务时，任务会过期。
 
 以下情况不会触发导航：
 

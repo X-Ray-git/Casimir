@@ -110,6 +110,59 @@ function createHarness(initialTabs, fetchImpl = async () => {
   };
 }
 
+async function transferWithDeclaredLength(contentLength) {
+  const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+  let arrayBufferCalls = 0;
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://arxiv.org/pdf/1706.03762",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const harness = createHarness([sourceTab, targetTab], async () => ({
+    ok: true,
+    status: 200,
+    body: null,
+    headers: {
+      get(name) {
+        if (name === "content-length") return String(contentLength);
+        if (name === "content-type") return "application/pdf";
+        return null;
+      },
+    },
+    async arrayBuffer() {
+      arrayBufferCalls += 1;
+      return pdfBytes.buffer;
+    },
+  }));
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  const messages = [];
+  const port = {
+    name: "casimir-pdf-upload",
+    sender: { tab: { id: targetTab.id } },
+    onMessage: event(),
+    postMessage(message) {
+      messages.push(message);
+    },
+    disconnect() {},
+  };
+  harness.onConnect.emit(port);
+  port.onMessage.emit({ type: "claim" });
+  await harness.flush();
+  await harness.flush();
+
+  return { arrayBufferCalls, harness, messages };
+}
+
 test("navigates a new blank pane beside an arXiv PDF", async () => {
   const sourceTab = {
     id: 1,
@@ -192,6 +245,31 @@ test("streams the matched arXiv PDF only to the paired ChatGPT tab", async () =>
   assert.equal(messages[1].filename, "1706.03762.pdf");
   assert.equal(messages[2].data, "JVBERg==");
   assert.equal(harness.sessionStorage["pendingPdfUpload:2"], undefined);
+});
+
+test("accepts a PDF declared at the 100 MB automatic transfer limit", async () => {
+  const result = await transferWithDeclaredLength(100 * 1024 * 1024);
+
+  assert.deepEqual(
+    result.messages.map((message) => message.type),
+    ["status", "start", "chunk", "done"],
+  );
+  assert.equal(result.arrayBufferCalls, 1);
+});
+
+test("rejects a PDF declared above the 100 MB automatic transfer limit", async () => {
+  const result = await transferWithDeclaredLength(100 * 1024 * 1024 + 1);
+
+  assert.deepEqual(
+    result.messages.map((message) => message.type),
+    ["status", "error"],
+  );
+  assert.equal(
+    result.messages[1].message,
+    "Error: PDF exceeds Casimir's 100 MB automatic transfer limit",
+  );
+  assert.equal(result.arrayBufferCalls, 0);
+  assert.equal(result.harness.sessionStorage["pendingPdfUpload:2"], undefined);
 });
 
 test("does not navigate a blank pane beside a non-arXiv page", async () => {

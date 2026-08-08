@@ -99,14 +99,14 @@
       void attachPdf()
         .catch((error) => {
           console.error(LOG_PREFIX, error);
-          showStatus(`PDF 添加失败：${error.message}`, "error");
+          showStatus(`PDF 添加失败：${error.message}`, "error", true);
         })
         .finally(() => port.disconnect());
       return;
     }
     if (message?.type === "error") {
       console.error(LOG_PREFIX, message.message);
-      showStatus(`PDF 获取失败：${message.message}`, "error");
+      showStatus(`PDF 获取失败：${message.message}`, "error", true);
     }
   });
   port.postMessage({ type: "claim" });
