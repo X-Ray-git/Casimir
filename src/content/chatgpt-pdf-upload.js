@@ -3,6 +3,10 @@
 
   const LOG_PREFIX = "[casimir:chatgpt-pdf-upload]";
   const PORT_NAME = "casimir-pdf-upload";
+  const COMPOSER_SELECTOR = 'form[data-type="unified-composer"]';
+  const ATTACHMENT_CONFIRM_ATTEMPTS = 15;
+  const ATTACHMENT_RETRY_ATTEMPTS = 50;
+  const ATTACHMENT_POLL_MS = 100;
   const chunks = [];
   let metadata = null;
   let statusHost = null;
@@ -40,9 +44,22 @@
     return bytes;
   }
 
+  function uploadInputIsReady(input) {
+    const composer = document.querySelector(COMPOSER_SELECTOR);
+    const plusButton = document.querySelector('[data-testid="composer-plus-btn"]');
+    return (
+      input instanceof HTMLInputElement &&
+      input.type === "file" &&
+      input.isConnected !== false &&
+      composer?.contains(input) &&
+      plusButton instanceof HTMLElement &&
+      !plusButton.disabled
+    );
+  }
+
   function waitForUploadInput(attemptsRemaining = 200) {
     const input = document.getElementById("upload-files");
-    if (input instanceof HTMLInputElement && input.type === "file") {
+    if (uploadInputIsReady(input)) {
       return Promise.resolve(input);
     }
     if (attemptsRemaining <= 1) return Promise.resolve(null);
@@ -54,6 +71,47 @@
     });
   }
 
+  function attachmentIsVisible(filename) {
+    const composer = document.querySelector(COMPOSER_SELECTOR);
+    if (!composer) return false;
+
+    return [...composer.querySelectorAll('[role="group"][aria-label]')].some(
+      (element) => element.getAttribute("aria-label") === filename,
+    );
+  }
+
+  async function waitForAttachment(filename, attemptsRemaining) {
+    if (attachmentIsVisible(filename)) return true;
+    if (attemptsRemaining <= 1) return false;
+
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, ATTACHMENT_POLL_MS);
+    });
+    return waitForAttachment(filename, attemptsRemaining - 1);
+  }
+
+  function setInputFile(input, file) {
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    const filesSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "files",
+    )?.set;
+
+    if (filesSetter) {
+      filesSetter.call(input, transfer.files);
+    } else {
+      input.files = transfer.files;
+    }
+  }
+
+  function dispatchUploadEvents(input, includeInputEvent) {
+    if (includeInputEvent) {
+      input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    }
+    input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  }
+
   async function attachPdf() {
     const input = await waitForUploadInput();
     if (!input) throw new Error("ChatGPT file input #upload-files was not found");
@@ -62,13 +120,35 @@
       type: metadata.contentType,
       lastModified: Date.now(),
     });
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    input.files = transfer.files;
-    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    setInputFile(input, file);
+    dispatchUploadEvents(input, true);
 
-    console.log(LOG_PREFIX, "PDF attached to ChatGPT's file input.", {
+    let attached = await waitForAttachment(
+      file.name,
+      ATTACHMENT_CONFIRM_ATTEMPTS,
+    );
+
+    if (!attached) {
+      const retryInput = await waitForUploadInput();
+      if (!retryInput) {
+        throw new Error("ChatGPT file input disappeared before upload retry");
+      }
+
+      if (retryInput.files?.[0] !== file) {
+        setInputFile(retryInput, file);
+        dispatchUploadEvents(retryInput, true);
+      } else {
+        dispatchUploadEvents(retryInput, false);
+      }
+
+      attached = await waitForAttachment(file.name, ATTACHMENT_RETRY_ATTEMPTS);
+    }
+
+    if (!attached) {
+      throw new Error("ChatGPT did not confirm the PDF attachment");
+    }
+
+    console.log(LOG_PREFIX, "PDF attachment confirmed by ChatGPT.", {
       filename: file.name,
       size: file.size,
     });

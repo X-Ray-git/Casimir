@@ -20,14 +20,41 @@ function eventChannel() {
   };
 }
 
-test("injects the transferred PDF into ChatGPT's file input without sending", async () => {
+async function runPdfInjection({ attachOnChange = 1 } = {}) {
   const dispatchedEvents = [];
+  let attachmentVisible = false;
+  let changeCount = 0;
 
-  class FakeInput {}
+  class FakeElement {}
+  class FakeInput extends FakeElement {}
   const input = new FakeInput();
   input.type = "file";
   input.files = [];
-  input.dispatchEvent = (event) => dispatchedEvents.push(event.type);
+  input.isConnected = true;
+  input.dispatchEvent = (event) => {
+    dispatchedEvents.push(event.type);
+    if (event.type === "change") {
+      changeCount += 1;
+      if (changeCount >= attachOnChange) attachmentVisible = true;
+    }
+    return true;
+  };
+
+  const attachment = {
+    getAttribute(name) {
+      return name === "aria-label" ? "1706.03762.pdf" : null;
+    },
+  };
+  const composer = {
+    contains(candidate) {
+      return candidate === input;
+    },
+    querySelectorAll() {
+      return attachmentVisible ? [attachment] : [];
+    },
+  };
+  const plusButton = new FakeElement();
+  plusButton.disabled = false;
 
   class FakeFile {
     constructor(chunks, name, options) {
@@ -56,6 +83,12 @@ test("injects the transferred PDF into ChatGPT's file input without sending", as
   const onMessage = eventChannel();
   const sentMessages = [];
   let disconnected = false;
+  const statusHost = {
+    id: "",
+    style: {},
+    textContent: "",
+    remove() {},
+  };
   const port = {
     onMessage,
     postMessage(message) {
@@ -71,13 +104,13 @@ test("injects the transferred PDF into ChatGPT's file input without sending", as
     getElementById(id) {
       return id === "upload-files" ? input : null;
     },
+    querySelector(selector) {
+      if (selector === 'form[data-type="unified-composer"]') return composer;
+      if (selector === '[data-testid="composer-plus-btn"]') return plusButton;
+      return null;
+    },
     createElement() {
-      return {
-        id: "",
-        style: {},
-        textContent: "",
-        remove() {},
-      };
+      return statusHost;
     },
   };
 
@@ -90,9 +123,14 @@ test("injects the transferred PDF into ChatGPT's file input without sending", as
     document,
     Event: FakeEvent,
     File: FakeFile,
+    HTMLElement: FakeElement,
     HTMLInputElement: FakeInput,
     Uint8Array,
-    window: { setTimeout() {} },
+    window: {
+      setTimeout(callback) {
+        callback();
+      },
+    },
   });
 
   assert.equal(sentMessages.length, 1);
@@ -105,15 +143,50 @@ test("injects the transferred PDF into ChatGPT's file input without sending", as
   });
   onMessage.emit({ type: "chunk", data: "JVBERg==" });
   onMessage.emit({ type: "done", totalBytes: 4 });
-  await new Promise(setImmediate);
-  await new Promise(setImmediate);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await new Promise(setImmediate);
+  }
 
-  assert.equal(input.files.length, 1);
-  assert.equal(input.files[0].name, "1706.03762.pdf");
-  assert.equal(input.files[0].type, "application/pdf");
-  assert.equal(input.files[0].size, 4);
-  assert.deepEqual(dispatchedEvents, ["input", "change"]);
-  assert.equal(disconnected, true);
+  return {
+    changeCount,
+    disconnected,
+    dispatchedEvents,
+    input,
+    statusHost,
+  };
+}
+
+test("confirms the transferred PDF in ChatGPT before reporting success", async () => {
+  const result = await runPdfInjection();
+
+  assert.equal(result.input.files.length, 1);
+  assert.equal(result.input.files[0].name, "1706.03762.pdf");
+  assert.equal(result.input.files[0].type, "application/pdf");
+  assert.equal(result.input.files[0].size, 4);
+  assert.deepEqual(result.dispatchedEvents, ["input", "change"]);
+  assert.match(result.statusHost.textContent, /^PDF 已添加：/);
+  assert.equal(result.disconnected, true);
+});
+
+test("replays a missed ChatGPT file change event once", async () => {
+  const result = await runPdfInjection({ attachOnChange: 2 });
+
+  assert.equal(result.changeCount, 2);
+  assert.deepEqual(result.dispatchedEvents, ["input", "change", "change"]);
+  assert.match(result.statusHost.textContent, /^PDF 已添加：/);
+  assert.equal(result.disconnected, true);
+});
+
+test("reports failure when ChatGPT never confirms the attachment", async () => {
+  const result = await runPdfInjection({ attachOnChange: Number.POSITIVE_INFINITY });
+
+  assert.equal(result.changeCount, 2);
+  assert.deepEqual(result.dispatchedEvents, ["input", "change", "change"]);
+  assert.equal(
+    result.statusHost.textContent,
+    "PDF 添加失败：ChatGPT did not confirm the PDF attachment",
+  );
+  assert.equal(result.disconnected, true);
 });
 
 test("automatically hides a PDF fetch error after five seconds", () => {

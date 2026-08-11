@@ -27,6 +27,8 @@ were developed under the ChatFlow name.
   its neutral `临时聊天` and `临时对话` button labels.
 - Automatically dismiss PDF fetch and attachment error messages after five
   seconds instead of leaving them permanently over the ChatGPT page.
+- Confirm that ChatGPT renders the PDF attachment and replay a missed upload
+  event once instead of reporting success before the composer accepts the file.
 
 ## [0.4.1] - 2026-07-25
 
