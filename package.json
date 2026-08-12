@@ -7,7 +7,7 @@
   "scripts": {
     "check": "npm run check:manifest && npm run check:syntax && npm test",
     "check:manifest": "node scripts/validate-manifest.mjs",
-    "check:syntax": "node --check src/background/arxiv-split-view.js && node --check src/content/arxiv-first-visit.js && node --check src/content/chatgpt-pdf-upload.js && node --check src/content/chatgpt-shortcuts.js",
+    "check:syntax": "node --check src/background/arxiv-split-view.js && node --check src/content/arxiv-first-visit.js && node --check src/content/chatgpt-pdf-upload.js && node --check src/content/chatgpt-rate-limit-dismiss.js && node --check src/content/chatgpt-shortcuts.js",
     "package": "bash scripts/package.sh",
     "test": "node --test tests/*.test.js"
   },

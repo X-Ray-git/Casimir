@@ -26,6 +26,7 @@ Casimir/
 │   └── content/
 │       ├── arxiv-first-visit.js
 │       ├── chatgpt-pdf-upload.js
+│       ├── chatgpt-rate-limit-dismiss.js
 │       └── chatgpt-shortcuts.js
 ├── tests/
 ├── scripts/
@@ -72,9 +73,11 @@ For a matching task, the script:
 
 1. Receives PDF metadata and chunks.
 2. Reconstructs a browser `File` in memory.
-3. Waits for ChatGPT's `#upload-files` input.
+3. Waits for ChatGPT's unified composer and `#upload-files` input.
 4. Assigns the file with `DataTransfer`.
 5. Dispatches `input` and `change` so ChatGPT performs its normal upload.
+6. Confirms the semantic attachment tile appears, replaying one missed `change`
+   event before reporting a failure.
 
 It does not inspect conversation messages, fill the prompt, click the send button, or call a private ChatGPT upload endpoint.
 
@@ -83,6 +86,15 @@ It does not inspect conversation messages, fill the prompt, click the send butto
 Captures the documented Casimir keyboard combinations before the page handles them. Site actions are isolated in small DOM adapters. New-chat navigation deliberately uses the stable ChatGPT root URL rather than clicking one of several duplicated responsive sidebar elements.
 
 The settings panel is rendered in a Shadow DOM host to avoid leaking styles into ChatGPT.
+
+### `chatgpt-rate-limit-dismiss.js`
+
+Observes ChatGPT for the dedicated
+`data-testid="modal-conversation-history-rate-limit"` notice. When its open
+dialog contains exactly one enabled action, the script clicks that native
+acknowledgement button. It does not inspect conversation content, dismiss other
+dialogs, poll conversation history, or claim to know when the server-side limit
+has ended.
 
 ## Split View and PDF data flow
 
@@ -147,9 +159,11 @@ PDF bytes travel only in extension memory from public arXiv to the exact paired 
 
 - Chrome 140 or newer is required for `tabs.splitViewId`.
 - Native Split View behavior is currently tested on macOS.
-- A PDF transfer is capped at 50 MB.
+- A PDF transfer is capped at 100 MB.
 - A pending transfer expires after two minutes.
 - ChatGPT file attachment depends on the current `#upload-files` DOM contract.
 - ChatGPT keyboard actions depend on a small set of current test IDs and accessibility labels.
+- Automatic conversation-history rate-limit acknowledgement depends on its
+  dedicated modal test ID and single-action dialog structure.
 
 When ChatGPT changes its DOM, prefer a deterministic URL or stable input contract over positional selectors and visible text.

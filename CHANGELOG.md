@@ -30,6 +30,11 @@ were developed under the ChatFlow name.
 - Confirm that ChatGPT renders the PDF attachment and replay a missed upload
   event once instead of reporting success before the composer accepts the file.
 
+### Added
+
+- Automatically acknowledge ChatGPT's dedicated conversation-history
+  rate-limit notice while leaving other dialogs untouched.
+
 ## [0.4.1] - 2026-07-25
 
 ### Fixed

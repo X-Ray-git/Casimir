@@ -13,6 +13,8 @@ Casimir 是一个面向个人工作流的 Chrome 扩展，聚焦 arXiv 阅读与
 - **arXiv 分屏**：在 arXiv PDF 旁创建 Chrome 原生分屏后，将新空白窗格打开为 ChatGPT。
 - **PDF 附件传递**：把匹配的公开 arXiv PDF 传给准确的 ChatGPT 标签页文件输入。
 - **ChatGPT 快捷键**：提供常用导航快捷键与本地自定义提示词。
+- **限流提醒处理**：自动确认并关闭 ChatGPT 的“对话记录访问受限”提醒，不影响
+  其他弹窗。
 
 ## 环境要求
 
@@ -86,7 +88,7 @@ npm run package
 - `tabs`：读取标签页和 `splitViewId`，识别刚创建的分屏空白窗格，并只导航匹配窗格。
 - `storage`：保存访问记录、自定义快捷键和短生命周期的 PDF 交接任务。
 - `https://arxiv.org/*`：运行首次访问脚本，并由后台获取匹配的公开 PDF。
-- `https://chatgpt.com/*`：运行快捷键与 PDF 文件输入脚本。
+- `https://chatgpt.com/*`：运行快捷键、PDF 文件输入及对话记录限流提醒处理脚本。
 
 Casimir 不读取 ChatGPT 对话内容，不调用未公开的 ChatGPT 后端接口，也不会填写提示词
 或自动发送消息。PDF 只会交给与源 arXiv 标签页配对的准确 ChatGPT 标签页。

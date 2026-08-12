@@ -37,7 +37,8 @@
       ],
       "js": [
         "src/content/chatgpt-shortcuts.js",
-        "src/content/chatgpt-pdf-upload.js"
+        "src/content/chatgpt-pdf-upload.js",
+        "src/content/chatgpt-rate-limit-dismiss.js"
       ],
       "run_at": "document_idle"
     }
