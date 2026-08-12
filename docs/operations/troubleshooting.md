@@ -72,7 +72,7 @@ Look for `[skip]` and its `reason` field in the service-worker console.
 
 1. Check the ChatGPT page for a Casimir status message.
 2. Check the service worker for `[PDF transferred]` or `[PDF transfer failed]`.
-3. Confirm the PDF is no larger than 50 MB.
+3. Confirm the PDF is no larger than Casimir's 100 MB automatic transfer limit.
 4. Confirm the ChatGPT page loaded within the two-minute task lifetime.
 5. Inspect the ChatGPT DOM for a file input with ID `upload-files`.
 

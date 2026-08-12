@@ -83,12 +83,20 @@ remains the canonical directory for unpacked development.
 
 ## Versioning
 
-Update these together for each release:
+Create a stable source checkpoint after a group of changes has been manually
+verified. Casimir does not require a GitHub Release or Git tag while it is
+installed directly from the repository.
+
+Run `npm run version:set -- <major.minor.patch>` to update the three JSON
+version fields together:
 
 1. `manifest.json` version.
 2. `package.json` and `package-lock.json` versions.
-3. Version displayed in `README.md` installation instructions.
-4. A dated entry in `CHANGELOG.md`.
+
+The manifest check rejects version drift between all three JSON files. Update
+the version displayed in the README installation instructions and move the
+accumulated changelog entries from `Unreleased` to a dated version section in
+the same commit.
 
 Use patch versions for compatible fixes, minor versions for new personal-toolbox capabilities, and major versions only for intentionally incompatible storage or workflow changes.
 
@@ -105,7 +113,7 @@ Use patch versions for compatible fixes, minor versions for new personal-toolbox
 ## Release and commit workflow
 
 Casimir is currently loaded directly from this repository rather than published
-to the Chrome Web Store. A normal release is:
+to the Chrome Web Store. A normal stable-version checkpoint is:
 
 1. Implement and test the change.
 2. Update documentation and version metadata.
@@ -113,3 +121,6 @@ to the Chrome Web Store. A normal release is:
 4. Run `npm run package` and verify the generated archive can be loaded.
 5. Commit the source, tests, and documentation together.
 6. Push the branch.
+
+Do not create a Git tag, GitHub Release, or store package unless the installation
+strategy changes or the user explicitly requests one.

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Casimir",
   "description": "A focused Chrome extension connecting arXiv reading with ChatGPT workflows.",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "minimum_chrome_version": "140",
   "icons": {
     "16": "assets/icons/icon-16.png",

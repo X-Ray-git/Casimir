@@ -8,6 +8,7 @@ const readJson = async (path) =>
 
 const manifest = await readJson("manifest.json");
 const packageMetadata = await readJson("package.json");
+const packageLock = await readJson("package-lock.json");
 
 if (manifest.manifest_version !== 3) {
   throw new Error("manifest.json must use Manifest V3");
@@ -20,6 +21,15 @@ if (manifest.name !== "Casimir") {
 if (manifest.version !== packageMetadata.version) {
   throw new Error(
     `version mismatch: manifest=${manifest.version}, package=${packageMetadata.version}`,
+  );
+}
+
+if (
+  manifest.version !== packageLock.version ||
+  manifest.version !== packageLock.packages?.[""]?.version
+) {
+  throw new Error(
+    `lockfile version mismatch: manifest=${manifest.version}, lockfile=${packageLock.version}, root=${packageLock.packages?.[""]?.version}`,
   );
 }
 

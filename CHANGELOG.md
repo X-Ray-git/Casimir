@@ -5,6 +5,8 @@ were developed under the ChatFlow name.
 
 ## Unreleased
 
+## [0.5.0] - 2026-08-12
+
 ### Changed
 
 - Extract the extension from the `workflow-tools` monorepo into the independent
