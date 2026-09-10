@@ -5,6 +5,15 @@ were developed under the ChatFlow name.
 
 ## Unreleased
 
+### Added
+
+- Attach PDFs from alphaXiv special-paper pages and publicly downloadable Nature
+  articles through the existing exact-tab Split View workflow.
+- Prefer an alphaXiv blog's trusted original-paper link and fall back to an
+  in-memory MHTML snapshot of the matched page when that PDF is unavailable.
+- Capture a fully rendered X Article directly as MHTML through the exact-tab
+  Split View workflow while ignoring ordinary X posts.
+
 ## [0.5.0] - 2026-08-12
 
 ### Changed

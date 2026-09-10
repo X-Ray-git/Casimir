@@ -1,8 +1,8 @@
 (() => {
   "use strict";
 
-  const LOG_PREFIX = "[casimir:chatgpt-pdf-upload]";
-  const PORT_NAME = "casimir-pdf-upload";
+  const LOG_PREFIX = "[casimir:chatgpt-attachment-upload]";
+  const PORT_NAME = "casimir-attachment-upload";
   const COMPOSER_SELECTOR = 'form[data-type="unified-composer"]';
   const ATTACHMENT_CONFIRM_ATTEMPTS = 15;
   const ATTACHMENT_RETRY_ATTEMPTS = 50;
@@ -112,7 +112,7 @@
     input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
   }
 
-  async function attachPdf() {
+  async function attachFile() {
     const input = await waitForUploadInput();
     if (!input) throw new Error("ChatGPT file input #upload-files was not found");
 
@@ -144,15 +144,16 @@
       attached = await waitForAttachment(file.name, ATTACHMENT_RETRY_ATTEMPTS);
     }
 
+    const attachmentKind = metadata.attachmentKind || "PDF";
     if (!attached) {
-      throw new Error("ChatGPT did not confirm the PDF attachment");
+      throw new Error(`ChatGPT did not confirm the ${attachmentKind} attachment`);
     }
 
-    console.log(LOG_PREFIX, "PDF attachment confirmed by ChatGPT.", {
+    console.log(LOG_PREFIX, "File attachment confirmed by ChatGPT.", {
       filename: file.name,
       size: file.size,
     });
-    showStatus(`PDF 已添加：${file.name}。请等待 ChatGPT 上传完成。`, "success", true);
+    showStatus(`${attachmentKind} 已添加：${file.name}。请等待 ChatGPT 上传完成。`, "success", true);
   }
 
   const port = chrome.runtime.connect({ name: PORT_NAME });
@@ -162,7 +163,15 @@
       return;
     }
     if (message?.type === "status" && message.status === "fetching") {
-      showStatus("Casimir 正在从 arXiv 获取 PDF…");
+      showStatus(`Casimir 正在从 ${message.sourceKind} 获取 PDF…`);
+      return;
+    }
+    if (message?.type === "status" && message.status === "capturing") {
+      showStatus(
+        message.direct
+          ? `正在将 ${message.sourceKind} 保存为 MHTML…`
+          : `原始 PDF 不可用，正在保存 ${message.sourceKind} 页面为 MHTML…`,
+      );
       return;
     }
     if (message?.type === "start") {
@@ -176,17 +185,25 @@
       return;
     }
     if (message?.type === "done") {
-      void attachPdf()
+      void attachFile()
         .catch((error) => {
           console.error(LOG_PREFIX, error);
-          showStatus(`PDF 添加失败：${error.message}`, "error", true);
+          showStatus(
+            `${metadata?.attachmentKind || "文件"} 添加失败：${error.message}`,
+            "error",
+            true,
+          );
         })
         .finally(() => port.disconnect());
       return;
     }
     if (message?.type === "error") {
       console.error(LOG_PREFIX, message.message);
-      showStatus(`PDF 获取失败：${message.message}`, "error", true);
+      showStatus(
+        `${message.attachmentKind || "PDF"} 获取失败：${message.message}`,
+        "error",
+        true,
+      );
     }
   });
   port.postMessage({ type: "claim" });

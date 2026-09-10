@@ -20,7 +20,12 @@ function eventChannel() {
   };
 }
 
-async function runPdfInjection({ attachOnChange = 1 } = {}) {
+async function runPdfInjection({
+  attachOnChange = 1,
+  filename = "1706.03762.pdf",
+  contentType = "application/pdf",
+  attachmentKind = "PDF",
+} = {}) {
   const dispatchedEvents = [];
   let attachmentVisible = false;
   let changeCount = 0;
@@ -42,7 +47,7 @@ async function runPdfInjection({ attachOnChange = 1 } = {}) {
 
   const attachment = {
     getAttribute(name) {
-      return name === "aria-label" ? "1706.03762.pdf" : null;
+      return name === "aria-label" ? filename : null;
     },
   };
   const composer = {
@@ -138,8 +143,9 @@ async function runPdfInjection({ attachOnChange = 1 } = {}) {
 
   onMessage.emit({
     type: "start",
-    filename: "1706.03762.pdf",
-    contentType: "application/pdf",
+    filename,
+    contentType,
+    attachmentKind,
   });
   onMessage.emit({ type: "chunk", data: "JVBERg==" });
   onMessage.emit({ type: "done", totalBytes: 4 });
@@ -175,6 +181,18 @@ test("replays a missed ChatGPT file change event once", async () => {
   assert.deepEqual(result.dispatchedEvents, ["input", "change", "change"]);
   assert.match(result.statusHost.textContent, /^PDF 已添加：/);
   assert.equal(result.disconnected, true);
+});
+
+test("attaches a captured alphaXiv MHTML file through the same input", async () => {
+  const result = await runPdfInjection({
+    filename: "On the Navier-Stokes Millennium Prize Problem.mhtml",
+    contentType: "multipart/related",
+    attachmentKind: "MHTML",
+  });
+
+  assert.equal(result.input.files[0].name.endsWith(".mhtml"), true);
+  assert.equal(result.input.files[0].type, "multipart/related");
+  assert.match(result.statusHost.textContent, /^MHTML 已添加：/);
 });
 
 test("reports failure when ChatGPT never confirms the attachment", async () => {

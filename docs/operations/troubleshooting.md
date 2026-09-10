@@ -17,7 +17,7 @@ Open Casimir's Service Worker inspector from `chrome://extensions/`.
 Main prefix:
 
 ```text
-[casimir:arxiv-split-view]
+[casimir:paper-split-view]
 ```
 
 Successful Split View and PDF flow:
@@ -25,9 +25,10 @@ Successful Split View and PDF flow:
 ```text
 [onCreated]
 [splitView detected]
-[matched arxiv]
+[matched paper]
 [update to ChatGPT]
 [PDF transferred]
+[MHTML transferred]
 ```
 
 Failures and safe skips use:
@@ -46,7 +47,7 @@ Prefixes:
 
 ```text
 [casimir:chatgpt-shortcuts]
-[casimir:chatgpt-pdf-upload]
+[casimir:chatgpt-attachment-upload]
 ```
 
 ### arXiv page
@@ -62,19 +63,26 @@ Prefix:
 Check that:
 
 - Chrome is version 140 or newer.
-- The source URL begins with `https://arxiv.org/pdf/`.
+- The source is an arXiv PDF, an alphaXiv `/abs/` or `/pdf/` paper, or a Nature
+  article with a public body-PDF download link, or a fully rendered X Article at
+  `x.com/<account>/article/<numeric-id>`.
 - `Cmd+Option+N` creates Chrome's native Split View rather than a normal tab.
 - The new pane was blank and created less than three seconds before Chrome exposed its Split View state.
 
 Look for `[skip]` and its `reason` field in the service-worker console.
 
-## ChatGPT opens but the PDF is missing
+## ChatGPT opens but the attachment is missing
 
 1. Check the ChatGPT page for a Casimir status message.
-2. Check the service worker for `[PDF transferred]` or `[PDF transfer failed]`.
-3. Confirm the PDF is no larger than Casimir's 100 MB automatic transfer limit.
+2. Check the service worker for `[PDF transferred]`, `[MHTML transferred]`, or `[PDF transfer failed]`.
+3. Confirm the PDF or MHTML is no larger than Casimir's 100 MB automatic transfer limit.
 4. Confirm the ChatGPT page loaded within the two-minute task lifetime.
-5. Inspect the ChatGPT DOM for a file input with ID `upload-files`.
+5. For alphaXiv papers, confirm `citation_pdf_url` points to an alphaXiv `/abs/*.pdf` URL.
+   For alphaXiv blogs, look for `[PDF unavailable; capturing MHTML]` when the trusted linked PDF fails.
+6. For Nature, confirm the article has a public `data-test="download-pdf"` body-PDF link.
+7. For X Article, confirm the page shows the full article heading and body; ordinary `/status/`
+   pages intentionally do not trigger.
+8. Inspect the ChatGPT DOM for a file input with ID `upload-files`.
 
 If the worker reports a successful transfer but the attachment is absent, ChatGPT likely changed its file-input DOM or event handling. Capture the page URL, Casimir version, ChatGPT console logs, and the current file-input markup.
 
@@ -82,9 +90,9 @@ If the worker reports a successful transfer but the attachment is absent, ChatGP
 
 This should be prevented by the session key `pendingPdfUpload:<targetTabId>`. Record:
 
-- source arXiv URL;
+- source paper URL;
 - target and unexpected ChatGPT URLs;
-- `[matched arxiv]` details;
+- `[matched paper]` details;
 - `[PDF transferred]` details.
 
 Do not weaken the tab-ID binding as a workaround.

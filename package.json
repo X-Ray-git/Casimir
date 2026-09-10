@@ -3,11 +3,11 @@
   "version": "0.5.0",
   "private": true,
   "license": "MIT",
-  "description": "A focused Chrome extension connecting arXiv reading with ChatGPT workflows.",
+  "description": "A focused Chrome extension connecting research reading with ChatGPT workflows.",
   "scripts": {
     "check": "npm run check:manifest && npm run check:syntax && npm test",
     "check:manifest": "node scripts/validate-manifest.mjs",
-    "check:syntax": "node --check src/background/arxiv-split-view.js && node --check src/content/arxiv-first-visit.js && node --check src/content/chatgpt-pdf-upload.js && node --check src/content/chatgpt-rate-limit-dismiss.js && node --check src/content/chatgpt-shortcuts.js && node --check scripts/set-version.mjs",
+    "check:syntax": "node --check src/background/arxiv-split-view.js && node --check src/content/arxiv-first-visit.js && node --check src/content/paper-source.js && node --check src/content/chatgpt-pdf-upload.js && node --check src/content/chatgpt-rate-limit-dismiss.js && node --check src/content/chatgpt-shortcuts.js && node --check scripts/set-version.mjs",
     "package": "bash scripts/package.sh",
     "test": "node --test tests/*.test.js",
     "version:set": "node scripts/set-version.mjs"

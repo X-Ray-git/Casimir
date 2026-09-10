@@ -2,11 +2,12 @@
 
 ## Purpose
 
-Casimir is a personal Manifest V3 Chrome extension for small, explicit arXiv and ChatGPT workflow automations. It currently performs three jobs:
+Casimir is a personal Manifest V3 Chrome extension for small, explicit research-reading and ChatGPT workflow automations. It currently performs four jobs:
 
 1. Redirect an arXiv abstract page to its PDF on the first visit to a paper.
-2. Turn a newly created blank Chrome Split View pane beside an arXiv PDF into ChatGPT.
-3. Attach that exact arXiv PDF to the paired ChatGPT composer without entering a prompt or sending a message.
+2. Turn a newly created blank Chrome Split View pane beside a supported paper into ChatGPT.
+3. Attach the exact arXiv, alphaXiv, or public Nature body PDF to the paired ChatGPT composer without entering a prompt or sending a message, with an MHTML fallback for alphaXiv blogs whose paper PDF is unavailable.
+4. Capture a rendered X Article directly as MHTML for the paired ChatGPT composer.
 
 ChatGPT keyboard shortcuts and local custom prompt shortcuts are a separate page-level module.
 
@@ -25,6 +26,7 @@ Casimir/
 │   │   └── arxiv-split-view.js
 │   └── content/
 │       ├── arxiv-first-visit.js
+│       ├── paper-source.js
 │       ├── chatgpt-pdf-upload.js
 │       ├── chatgpt-rate-limit-dismiss.js
 │       └── chatgpt-shortcuts.js
@@ -59,19 +61,30 @@ The service worker listens for newly created tabs and waits briefly for Chrome t
 - it remains in the original window;
 - it belongs to a real Split View;
 - its URL is still a recognized blank or Chrome Split View placeholder page; and
-- another tab in the same Split View is an `https://arxiv.org/pdf/` URL.
+- another tab in the same Split View resolves to a supported paper PDF.
 
-Before navigating the blank pane, the worker stores a short-lived PDF task keyed by the exact target tab ID. It then navigates that tab to `https://chatgpt.com/`.
+Before navigating the blank pane, the worker stores a short-lived attachment task keyed by the exact target tab ID. It then navigates that tab to `https://chatgpt.com/`.
 
-The same worker accepts a named runtime port from the ChatGPT upload content script. It validates the sender tab by looking up only that tab's pending task, fetches the public PDF, checks its type and size, and streams base64-encoded chunks over the port.
+The same worker accepts a named runtime port from the ChatGPT upload content script. It validates the sender tab by looking up only that tab's pending task, fetches the public PDF without credentials, checks its type and size, and streams base64-encoded chunks over the port. For an alphaXiv blog, it prefers a trusted linked paper PDF; if that fetch fails, `pageCapture.saveAsMHTML()` captures the exact source tab and streams the snapshot instead.
+
+### `paper-source.js`
+
+Runs only on alphaXiv paper routes, Nature article routes, and X Article routes. alphaXiv PDFs are
+resolved from validated `citation_pdf_url` metadata; blog pages also expose a
+linked original-paper candidate, their page type, and title. Nature PDFs are resolved
+from the semantic body-PDF download link rather than supplemental-material
+links or the site's misleading citation PDF URL. Resolved URLs are validated
+again by the service worker against the source page hostname and path contract.
+For X, it verifies that the dedicated Article container and a substantial rendered
+body are present; ordinary posts and unrendered loading shells remain unsupported.
 
 ### `chatgpt-pdf-upload.js`
 
-Runs on ChatGPT and claims a pending PDF task for its own tab. Tabs without a matching task receive no data and exit immediately.
+Runs on ChatGPT and claims a pending attachment task for its own tab. Tabs without a matching task receive no data and exit immediately.
 
 For a matching task, the script:
 
-1. Receives PDF metadata and chunks.
+1. Receives PDF or MHTML metadata and chunks.
 2. Reconstructs a browser `File` in memory.
 3. Waits for ChatGPT's unified composer and `#upload-files` input.
 4. Assigns the file with `DataTransfer`.
@@ -99,13 +112,13 @@ has ended.
 ## Split View and PDF data flow
 
 ```text
-arXiv PDF tab
+supported paper tab
     │
     │ Cmd+Option+N
     ▼
 new blank Split View tab
     │
-    │ service worker validates splitViewId and peer PDF
+    │ service worker validates splitViewId and resolves the peer PDF
     ▼
 chrome.storage.session[pendingPdfUpload:<targetTabId>]
     │
@@ -115,7 +128,10 @@ chrome.storage.session[pendingPdfUpload:<targetTabId>]
 ChatGPT content script claims its exact tab task
     │
     ▼
-service worker fetches arXiv PDF and streams chunks
+service worker fetches the public PDF without credentials and streams chunks
+    │
+    ├── alphaXiv blog only: failed PDF → capture exact source tab as MHTML
+    ├── X Article: capture exact source tab directly as MHTML
     │
     ▼
 File → DataTransfer → #upload-files → input/change
@@ -138,7 +154,7 @@ ChatGPT displays and uploads the attachment
 
 | Key | Owner | Value | Lifetime |
 | --- | --- | --- | --- |
-| `pendingPdfUpload:<tabId>` | service worker | Source PDF URL plus creation timestamp | Consumed once, expires after two minutes, or cleared when the tab closes |
+| `pendingPdfUpload:<tabId>` | service worker | Source URL, exact source tab, fallback metadata, and creation timestamp | Consumed once, expires after two minutes, or cleared when the tab closes |
 
 Session storage allows the task to survive Manifest V3 service-worker suspension without persisting it across a browser restart.
 
@@ -149,18 +165,27 @@ The service worker keeps recent candidate tabs, processed tab IDs, and retry tim
 ## Permissions and trust boundaries
 
 - `tabs` is used to inspect tab URLs and `splitViewId`, query Split View peers, and navigate the qualifying blank pane.
+- `pageCapture` captures a matched X Article directly, or the matched alphaXiv
+  blog tab after its paper PDF fails.
 - `storage` is used for user settings, visit history, and short-lived handoff records.
 - `https://arxiv.org/*` permits the first-visit script and background PDF fetch.
+- `https://www.alphaxiv.org/*` permits alphaXiv metadata resolution and public PDF fetches.
+- `https://cdn.openai.com/*` permits the currently supported alphaXiv blog's trusted original-paper fetch without granting all-sites access.
+- `https://www.nature.com/*` permits Nature body-PDF link resolution and public PDF fetches.
+- `https://x.com/*` permits rendered X Article validation and exact-tab capture; ordinary status routes are rejected.
 - `https://chatgpt.com/*` permits ChatGPT content scripts.
 
-PDF bytes travel only in extension memory from public arXiv to the exact paired ChatGPT tab. ChatGPT then handles the actual external upload. Casimir does not retain the PDF, write it to disk, or send a message.
+Attachment bytes travel only in extension memory from the supported source to the exact paired ChatGPT tab. ChatGPT then handles the actual external upload. Casimir does not retain the attachment, write it to disk, reuse Nature login credentials, bypass access controls, or send a message. An MHTML attachment contains the alphaXiv or X page content and resources rendered at capture time.
 
 ## Limits and brittle interfaces
 
 - Chrome 140 or newer is required for `tabs.splitViewId`.
 - Native Split View behavior is currently tested on macOS.
-- A PDF transfer is capped at 100 MB.
+- A PDF or MHTML transfer is capped at 100 MB.
 - A pending transfer expires after two minutes.
+- Nature support is limited to body PDFs downloadable without authentication.
+- alphaXiv and Nature resolution depend on current metadata and semantic download-link contracts.
+- X Article support depends on its dedicated semantic `<article>` remaining available after rendering.
 - ChatGPT file attachment depends on the current `#upload-files` DOM contract.
 - ChatGPT keyboard actions depend on a small set of current test IDs and accessibility labels.
 - Automatic conversation-history rate-limit acknowledgement depends on its

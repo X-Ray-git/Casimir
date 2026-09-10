@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Casimir",
-  "description": "A focused Chrome extension connecting arXiv reading with ChatGPT workflows.",
+  "description": "A focused Chrome extension connecting research reading with ChatGPT workflows.",
   "version": "0.5.0",
   "minimum_chrome_version": "140",
   "icons": {
@@ -11,17 +11,34 @@
     "128": "assets/icons/icon-128.png"
   },
   "permissions": [
+    "pageCapture",
     "storage",
     "tabs"
   ],
   "host_permissions": [
     "https://arxiv.org/*",
+    "https://cdn.openai.com/*",
+    "https://www.alphaxiv.org/*",
+    "https://www.nature.com/*",
+    "https://x.com/*",
     "https://chatgpt.com/*"
   ],
   "background": {
     "service_worker": "src/background/arxiv-split-view.js"
   },
   "content_scripts": [
+    {
+      "matches": [
+        "https://www.alphaxiv.org/abs/*",
+        "https://www.alphaxiv.org/pdf/*",
+        "https://www.nature.com/articles/*",
+        "https://x.com/*/article/*"
+      ],
+      "js": [
+        "src/content/paper-source.js"
+      ],
+      "run_at": "document_idle"
+    },
     {
       "matches": [
         "https://arxiv.org/abs/*"

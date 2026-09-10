@@ -20,9 +20,18 @@ function event() {
   };
 }
 
-function createHarness(initialTabs, fetchImpl = async () => {
-  throw new Error("Unexpected fetch");
-}) {
+function createHarness(
+  initialTabs,
+  fetchImpl = async () => {
+    throw new Error("Unexpected fetch");
+  },
+  resolveSource = async () => {
+    throw new Error("No paper source content script");
+  },
+  captureMhtml = async () => {
+    throw new Error("Unexpected MHTML capture");
+  },
+) {
   const tabs = new Map(initialTabs.map((tab) => [tab.id, { ...tab }]));
   const updates = [];
   const onCreated = event();
@@ -47,6 +56,7 @@ function createHarness(initialTabs, fetchImpl = async () => {
       },
     },
     runtime: { onConnect },
+    pageCapture: { saveAsMHTML: captureMhtml },
     tabs: {
       SPLIT_VIEW_ID_NONE: -1,
       onCreated,
@@ -64,6 +74,9 @@ function createHarness(initialTabs, fetchImpl = async () => {
             tab.splitViewId === query.splitViewId,
         );
       },
+      async sendMessage(tabId, message) {
+        return resolveSource(tabId, message);
+      },
       async update(tabId, change) {
         updates.push({ tabId, change: { ...change } });
         tabs.set(tabId, { ...tabs.get(tabId), ...change });
@@ -77,6 +90,7 @@ function createHarness(initialTabs, fetchImpl = async () => {
     chrome,
     fetch: fetchImpl,
     btoa,
+    Blob,
     Uint8Array,
     URL,
     console: { log() {} },
@@ -147,7 +161,7 @@ async function transferWithDeclaredLength(contentLength) {
 
   const messages = [];
   const port = {
-    name: "casimir-pdf-upload",
+    name: "casimir-attachment-upload",
     sender: { tab: { id: targetTab.id } },
     onMessage: event(),
     postMessage(message) {
@@ -225,7 +239,7 @@ test("streams the matched arXiv PDF only to the paired ChatGPT tab", async () =>
 
   const messages = [];
   const port = {
-    name: "casimir-pdf-upload",
+    name: "casimir-attachment-upload",
     sender: { tab: { id: 2 } },
     onMessage: event(),
     postMessage(message) {
@@ -244,6 +258,340 @@ test("streams the matched arXiv PDF only to the paired ChatGPT tab", async () =>
   );
   assert.equal(messages[1].filename, "1706.03762.pdf");
   assert.equal(messages[2].data, "JVBERg==");
+  assert.equal(harness.sessionStorage["pendingPdfUpload:2"], undefined);
+});
+
+test("navigates beside an alphaXiv special paper and stores its PDF", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://www.alphaxiv.org/pdf/2609.compose-cl",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    undefined,
+    async (tabId, message) => {
+      assert.equal(tabId, sourceTab.id);
+      assert.equal(message.type, "casimir-resolve-pdf-source");
+      return {
+        pdfUrl: "https://www.alphaxiv.org/abs/2609.compose-cl.pdf",
+      };
+    },
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  assert.deepEqual(harness.updates, [
+    { tabId: targetTab.id, change: { url: "https://chatgpt.com/" } },
+  ]);
+  assert.equal(
+    harness.sessionStorage["pendingPdfUpload:2"].sourceUrl,
+    "https://www.alphaxiv.org/abs/2609.compose-cl.pdf",
+  );
+  assert.equal(
+    harness.sessionStorage["pendingPdfUpload:2"].sourceKind,
+    "alphaXiv",
+  );
+});
+
+test("prefers a trusted paper linked from an alphaXiv blog", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://www.alphaxiv.org/abs/2609.navier-stokes-solution",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    undefined,
+    async () => ({
+      pdfUrl:
+        "https://www.alphaxiv.org/abs/2609.navier-stokes-solution.pdf",
+      linkedPdfUrl:
+        "https://cdn.openai.com/pdf/example/navier-stokes.pdf",
+      pageType: "blog",
+      pageTitle: "On the Navier-Stokes Millennium Prize Problem | alphaXiv",
+    }),
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  const task = harness.sessionStorage["pendingPdfUpload:2"];
+  assert.equal(
+    task.sourceUrl,
+    "https://cdn.openai.com/pdf/example/navier-stokes.pdf",
+  );
+  assert.equal(task.sourceTabId, sourceTab.id);
+  assert.equal(task.fallbackMhtml, true);
+});
+
+test("captures an alphaXiv blog as MHTML when its linked PDF fails", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://www.alphaxiv.org/abs/2609.navier-stokes-solution",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const capturedTabIds = [];
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    async () => ({
+      ok: false,
+      status: 404,
+      headers: { get() { return null; } },
+    }),
+    async () => ({
+      pdfUrl:
+        "https://www.alphaxiv.org/abs/2609.navier-stokes-solution.pdf",
+      linkedPdfUrl:
+        "https://cdn.openai.com/pdf/example/navier-stokes.pdf",
+      pageType: "blog",
+      pageTitle: "On the Navier-Stokes Millennium Prize Problem | alphaXiv",
+    }),
+    async ({ tabId }) => {
+      capturedTabIds.push(tabId);
+      return new Blob(["MHTML"], { type: "multipart/related" });
+    },
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  const messages = [];
+  const port = {
+    name: "casimir-attachment-upload",
+    sender: { tab: { id: targetTab.id } },
+    onMessage: event(),
+    postMessage(message) {
+      messages.push(message);
+    },
+    disconnect() {},
+  };
+  harness.onConnect.emit(port);
+  port.onMessage.emit({ type: "claim" });
+  for (let attempt = 0; attempt < 5; attempt += 1) await harness.flush();
+
+  assert.deepEqual(capturedTabIds, [sourceTab.id]);
+  assert.deepEqual(
+    messages.map((message) => message.type),
+    ["status", "status", "start", "chunk", "done"],
+  );
+  assert.equal(messages[2].attachmentKind, "MHTML");
+  assert.equal(
+    messages[2].filename,
+    "On the Navier-Stokes Millennium Prize Problem.mhtml",
+  );
+  assert.equal(messages[3].data, "TUhUTUw=");
+  assert.equal(harness.sessionStorage["pendingPdfUpload:2"], undefined);
+});
+
+test("stores an MHTML-only fallback for an alphaXiv blog without a PDF", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://www.alphaxiv.org/abs/2609.blog-without-paper",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    undefined,
+    async () => ({
+      pdfUrl: null,
+      linkedPdfUrl: "https://example.com/untrusted.pdf",
+      pageType: "blog",
+      pageTitle: "Blog without paper | alphaXiv",
+    }),
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  const task = harness.sessionStorage["pendingPdfUpload:2"];
+  assert.equal(task.sourceUrl, null);
+  assert.equal(task.sourceTabId, sourceTab.id);
+  assert.equal(task.fallbackMhtml, true);
+});
+
+test("captures a rendered X Article directly as MHTML", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://x.com/vllm_project/article/2097427730983776758",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  let fetchCalls = 0;
+  const capturedTabIds = [];
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    async () => {
+      fetchCalls += 1;
+      throw new Error("X Article must not be fetched as a PDF");
+    },
+    async () => ({
+      pageType: "x-article",
+      ready: true,
+      pageTitle: "vLLM x AgentX: Optimizing for Real-World Agentic Serving",
+    }),
+    async ({ tabId }) => {
+      capturedTabIds.push(tabId);
+      return new Blob(["X ARTICLE"], { type: "multipart/related" });
+    },
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  assert.deepEqual(harness.updates, [
+    { tabId: targetTab.id, change: { url: "https://chatgpt.com/" } },
+  ]);
+  const task = harness.sessionStorage["pendingPdfUpload:2"];
+  assert.equal(task.sourceKind, "X Article");
+  assert.equal(task.directMhtml, true);
+
+  const messages = [];
+  const port = {
+    name: "casimir-attachment-upload",
+    sender: { tab: { id: targetTab.id } },
+    onMessage: event(),
+    postMessage(message) {
+      messages.push(message);
+    },
+    disconnect() {},
+  };
+  harness.onConnect.emit(port);
+  port.onMessage.emit({ type: "claim" });
+  for (let attempt = 0; attempt < 5; attempt += 1) await harness.flush();
+
+  assert.equal(fetchCalls, 0);
+  assert.deepEqual(capturedTabIds, [sourceTab.id]);
+  assert.deepEqual(
+    messages.map((message) => message.type),
+    ["status", "start", "chunk", "done"],
+  );
+  assert.equal(messages[0].direct, true);
+  assert.equal(
+    messages[1].filename,
+    "vLLM x AgentX- Optimizing for Real-World Agentic Serving.mhtml",
+  );
+  assert.equal(messages[1].attachmentKind, "MHTML");
+});
+
+test("ignores an ordinary X status page", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://x.com/vllm_project/status/2097427730983776758",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const harness = createHarness([sourceTab, targetTab]);
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  assert.deepEqual(harness.updates, []);
+  assert.equal(harness.sessionStorage["pendingPdfUpload:2"], undefined);
+});
+
+test("navigates beside a public Nature article and stores its body PDF", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://www.nature.com/articles/s41746-026-03084-5",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    undefined,
+    async () => ({
+      pdfUrl:
+        "https://www.nature.com/articles/s41746-026-03084-5_reference.pdf",
+    }),
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  assert.deepEqual(harness.updates, [
+    { tabId: targetTab.id, change: { url: "https://chatgpt.com/" } },
+  ]);
+  assert.equal(
+    harness.sessionStorage["pendingPdfUpload:2"].sourceUrl,
+    "https://www.nature.com/articles/s41746-026-03084-5_reference.pdf",
+  );
+  assert.equal(
+    harness.sessionStorage["pendingPdfUpload:2"].sourceKind,
+    "Nature",
+  );
+});
+
+test("rejects a page-provided PDF URL outside its supported source", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://www.nature.com/articles/s41746-026-03084-5",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    undefined,
+    async () => ({ pdfUrl: "https://example.com/untrusted.pdf" }),
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  assert.deepEqual(harness.updates, []);
   assert.equal(harness.sessionStorage["pendingPdfUpload:2"], undefined);
 });
 

@@ -1,9 +1,10 @@
-const LOG_PREFIX = "[casimir:arxiv-split-view]";
+const LOG_PREFIX = "[casimir:paper-split-view]";
 const CHATGPT_URL = "https://chatgpt.com/";
 const RECENT_TAB_WINDOW_MS = 3000;
 const CANDIDATE_TTL_MS = 10000;
 const RETRY_DELAYS_MS = [0, 80, 200, 500, 1000, 2000];
-const PDF_UPLOAD_PORT = "casimir-pdf-upload";
+const ATTACHMENT_UPLOAD_PORT = "casimir-attachment-upload";
+const PDF_SOURCE_REQUEST = "casimir-resolve-pdf-source";
 const PDF_TASK_PREFIX = "pendingPdfUpload:";
 const PDF_TASK_TTL_MS = 2 * 60 * 1000;
 const MAX_PDF_MIB = 100;
@@ -34,6 +35,124 @@ function isArxivPdfUrl(url) {
     );
   } catch {
     return false;
+  }
+}
+
+function isResolvablePaperPageUrl(url) {
+  if (!url) return false;
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+
+    const hostname = parsed.hostname.toLowerCase();
+    return (
+      (hostname === "www.alphaxiv.org" &&
+        /^\/(?:abs|pdf)\/[^/]+\/?$/.test(parsed.pathname)) ||
+      (hostname === "www.nature.com" &&
+        /^\/articles\/[^/]+\/?$/.test(parsed.pathname)) ||
+      (hostname === "x.com" &&
+        /^\/[^/]+\/article\/\d+\/?$/.test(parsed.pathname))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function validatedResolvedSource(pageUrl, resolution) {
+  if (!resolution || typeof resolution !== "object") return null;
+
+  try {
+    const page = new URL(pageUrl);
+    if (page.protocol !== "https:") return null;
+
+    const hostname = page.hostname.toLowerCase();
+    if (hostname === "www.alphaxiv.org") {
+      const linkedPdf = new URL(resolution.linkedPdfUrl || "", pageUrl);
+      if (
+        resolution.pageType === "blog" &&
+        linkedPdf.protocol === "https:" &&
+        linkedPdf.hostname.toLowerCase() === "cdn.openai.com" &&
+        linkedPdf.pathname.toLowerCase().endsWith(".pdf")
+      ) {
+        return {
+          kind: "alphaXiv",
+          sourceUrl: linkedPdf.href,
+          fallbackMhtml: true,
+          pageTitle: resolution.pageTitle,
+        };
+      }
+
+      const pdf = new URL(resolution.pdfUrl || "", pageUrl);
+      if (
+        pdf.protocol === "https:" &&
+        pdf.hostname.toLowerCase() === hostname &&
+        /^\/abs\/[^/]+\.pdf$/.test(pdf.pathname)
+      ) {
+        return {
+          kind: "alphaXiv",
+          sourceUrl: pdf.href,
+          fallbackMhtml: resolution.pageType === "blog",
+          pageTitle: resolution.pageTitle,
+        };
+      }
+
+      if (resolution.pageType === "blog") {
+        return {
+          kind: "alphaXiv",
+          sourceUrl: null,
+          fallbackMhtml: true,
+          pageTitle: resolution.pageTitle,
+        };
+      }
+    }
+
+    if (hostname === "www.nature.com") {
+      const pdf = new URL(resolution.pdfUrl || "", pageUrl);
+      if (
+        pdf.protocol === "https:" &&
+        pdf.hostname.toLowerCase() === hostname &&
+        /^\/articles\/[^/]+_reference\.pdf$/.test(pdf.pathname)
+      ) {
+        return { kind: "Nature", sourceUrl: pdf.href };
+      }
+    }
+
+    if (
+      hostname === "x.com" &&
+      resolution.pageType === "x-article" &&
+      resolution.ready === true
+    ) {
+      return {
+        kind: "X Article",
+        sourceUrl: null,
+        directMhtml: true,
+        pageTitle: resolution.pageTitle,
+      };
+    }
+  } catch {
+    // Ignore malformed or unsupported page-provided URLs.
+  }
+
+  return null;
+}
+
+async function resolvePdfSource(tab) {
+  const pageUrl = tabUrl(tab);
+  if (isArxivPdfUrl(pageUrl)) {
+    return { kind: "arXiv", sourceUrl: pageUrl };
+  }
+  if (!isResolvablePaperPageUrl(pageUrl)) return null;
+
+  try {
+    const resolution = await chrome.tabs.sendMessage(tab.id, {
+      type: PDF_SOURCE_REQUEST,
+    });
+    const source = validatedResolvedSource(pageUrl, resolution);
+    return source ? { ...source, sourceTabId: tab.id } : null;
+  } catch (error) {
+    skip(tab, "paper source resolver unavailable", { error: String(error) });
+    return null;
   }
 }
 
@@ -91,10 +210,15 @@ function pdfTaskKey(tabId) {
   return `${PDF_TASK_PREFIX}${tabId}`;
 }
 
-async function setPendingPdfUpload(targetTabId, sourceUrl) {
+async function setPendingPdfUpload(targetTabId, source) {
   await chrome.storage.session.set({
     [pdfTaskKey(targetTabId)]: {
-      sourceUrl,
+      sourceUrl: source.sourceUrl,
+      sourceKind: source.kind,
+      sourceTabId: source.sourceTabId,
+      fallbackMhtml: source.fallbackMhtml === true,
+      directMhtml: source.directMhtml === true,
+      pageTitle: source.pageTitle,
       createdAt: Date.now(),
     },
   });
@@ -139,14 +263,119 @@ function pdfSizeLimitError() {
   );
 }
 
+function attachmentSizeLimitError() {
+  return new Error(
+    `Attachment exceeds Casimir's ${MAX_PDF_MIB} MB automatic transfer limit`,
+  );
+}
+
+function mhtmlFilename(title) {
+  const withoutSiteName = String(title || "Captured article")
+    .replace(/\s*\|\s*alphaXiv\s*$/i, "")
+    .trim();
+  const safeTitle = withoutSiteName
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-")
+    .replace(/\s+/g, " ")
+    .slice(0, 140)
+    .trim();
+  return `${safeTitle || "Captured article"}.mhtml`;
+}
+
+async function postBlob(port, blob, metadata) {
+  if (blob.size > MAX_PDF_BYTES) throw attachmentSizeLimitError();
+
+  port.postMessage({
+    type: "start",
+    filename: metadata.filename,
+    contentType: metadata.contentType,
+    expectedBytes: blob.size || null,
+    attachmentKind: metadata.attachmentKind,
+  });
+
+  let totalBytes = 0;
+  const reader = blob.stream().getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > MAX_PDF_BYTES) {
+      await reader.cancel();
+      throw attachmentSizeLimitError();
+    }
+    port.postMessage({ type: "chunk", data: bytesToBase64(value) });
+  }
+  return totalBytes;
+}
+
+async function captureMhtml(port, task) {
+  if (!Number.isInteger(task.sourceTabId)) {
+    throw new Error("Source tab is unavailable for MHTML capture");
+  }
+
+  port.postMessage({
+    type: "status",
+    status: "capturing",
+    sourceKind: task.sourceKind || "alphaXiv",
+    direct: task.directMhtml === true,
+  });
+  const blob = await chrome.pageCapture.saveAsMHTML({
+    tabId: task.sourceTabId,
+  });
+  if (!(blob instanceof Blob)) {
+    throw new Error("Chrome did not return an MHTML snapshot");
+  }
+
+  return postBlob(port, blob, {
+    filename: mhtmlFilename(task.pageTitle),
+    contentType: "multipart/related",
+    attachmentKind: "MHTML",
+  });
+}
+
 async function transferPdf(port, targetTabId, task) {
+  if (task.directMhtml) {
+    try {
+      const totalBytes = await captureMhtml(port, task);
+      await clearPendingPdfUpload(targetTabId);
+      port.postMessage({ type: "done", totalBytes });
+      log("[MHTML transferred]", {
+        targetTabId,
+        sourceTabId: task.sourceTabId,
+        totalBytes,
+      });
+    } catch (error) {
+      await clearPendingPdfUpload(targetTabId);
+      log("[MHTML transfer failed]", {
+        targetTabId,
+        sourceTabId: task.sourceTabId,
+        error: String(error),
+      });
+      try {
+        port.postMessage({
+          type: "error",
+          message: String(error),
+          attachmentKind: "MHTML",
+        });
+      } catch {
+        // The ChatGPT tab may have closed during capture.
+      }
+    }
+    return;
+  }
+
   try {
-    port.postMessage({ type: "status", status: "fetching" });
+    if (!task.sourceUrl) throw new Error("No usable PDF source was found");
+
+    port.postMessage({
+      type: "status",
+      status: "fetching",
+      sourceKind: task.sourceKind || "paper source",
+    });
     const response = await fetch(task.sourceUrl, {
       cache: "no-store",
       credentials: "omit",
     });
-    if (!response.ok) throw new Error(`arXiv returned HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`PDF source returned HTTP ${response.status}`);
 
     const contentLength = Number(response.headers.get("content-length") || 0);
     if (contentLength > MAX_PDF_BYTES) {
@@ -163,6 +392,7 @@ async function transferPdf(port, targetTabId, task) {
       filename: pdfFilename(task.sourceUrl),
       contentType: "application/pdf",
       expectedBytes: contentLength || null,
+      attachmentKind: "PDF",
     });
 
     let totalBytes = 0;
@@ -181,9 +411,7 @@ async function transferPdf(port, targetTabId, task) {
     } else {
       const bytes = new Uint8Array(await response.arrayBuffer());
       totalBytes = bytes.byteLength;
-      if (totalBytes > MAX_PDF_BYTES) {
-        throw pdfSizeLimitError();
-      }
+      if (totalBytes > MAX_PDF_BYTES) throw pdfSizeLimitError();
       port.postMessage({ type: "chunk", data: bytesToBase64(bytes) });
     }
 
@@ -194,15 +422,42 @@ async function transferPdf(port, targetTabId, task) {
       sourceUrl: task.sourceUrl,
       totalBytes,
     });
-  } catch (error) {
+  } catch (pdfError) {
+    if (task.fallbackMhtml && !String(pdfError).includes("transfer limit")) {
+      try {
+        log("[PDF unavailable; capturing MHTML]", {
+          targetTabId,
+          sourceUrl: task.sourceUrl,
+          error: String(pdfError),
+        });
+        const totalBytes = await captureMhtml(port, task);
+        await clearPendingPdfUpload(targetTabId);
+        port.postMessage({ type: "done", totalBytes });
+        log("[MHTML transferred]", {
+          targetTabId,
+          sourceTabId: task.sourceTabId,
+          totalBytes,
+        });
+        return;
+      } catch (mhtmlError) {
+        pdfError = new Error(
+          `${String(pdfError)}; MHTML fallback failed: ${String(mhtmlError)}`,
+        );
+      }
+    }
+
     await clearPendingPdfUpload(targetTabId);
     log("[PDF transfer failed]", {
       targetTabId,
       sourceUrl: task.sourceUrl,
-      error: String(error),
+      error: String(pdfError),
     });
     try {
-      port.postMessage({ type: "error", message: String(error) });
+      port.postMessage({
+        type: "error",
+        message: String(pdfError),
+        attachmentKind: task.fallbackMhtml ? "附件" : "PDF",
+      });
     } catch {
       // The ChatGPT tab may have closed while the PDF was being fetched.
     }
@@ -293,12 +548,19 @@ async function evaluateCandidate(tabId, trigger) {
     tabs: splitTabs.map(summarizeTab),
   });
 
-  const sourceTab = splitTabs.find(
-    (peer) => peer.id !== tab.id && isArxivPdfUrl(tabUrl(peer)),
-  );
+  let sourceTab = null;
+  let source = null;
+  for (const peer of splitTabs) {
+    if (peer.id === tab.id) continue;
+    const resolved = await resolvePdfSource(peer);
+    if (!resolved) continue;
+    sourceTab = peer;
+    source = resolved;
+    break;
+  }
 
-  if (!sourceTab) {
-    skip(tab, "no arXiv PDF in the same Split View", {
+  if (!sourceTab || !source) {
+    skip(tab, "no supported paper source in the same Split View", {
       trigger,
       splitViewId: tab.splitViewId,
     });
@@ -310,14 +572,16 @@ async function evaluateCandidate(tabId, trigger) {
   processedTabIds.add(tabId);
   clearRetryTimers(tabId);
 
-  log("[matched arxiv]", {
+  log("[matched paper]", {
+    sourceKind: source.kind,
     sourceTabId: sourceTab.id,
-    sourceUrl: tabUrl(sourceTab),
+    sourcePageUrl: tabUrl(sourceTab),
+    sourceUrl: source.sourceUrl,
     targetTabId: tab.id,
   });
 
   try {
-    await setPendingPdfUpload(tab.id, tabUrl(sourceTab));
+    await setPendingPdfUpload(tab.id, source);
     await chrome.tabs.update(tab.id, { url: CHATGPT_URL });
     log("[update to ChatGPT]", { targetTabId: tab.id, url: CHATGPT_URL });
   } catch (error) {
@@ -378,7 +642,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== PDF_UPLOAD_PORT) return;
+  if (port.name !== ATTACHMENT_UPLOAD_PORT) return;
 
   const targetTabId = port.sender?.tab?.id;
   if (!Number.isInteger(targetTabId)) {
