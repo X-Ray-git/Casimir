@@ -11,6 +11,7 @@ const source = fs.readFileSync(
 function resolveFromPage({
   href,
   citationPdfUrl = null,
+  citationTitle = null,
   downloadPdfUrl = null,
   blogPdfUrl = null,
   pageTitle = "Example | alphaXiv",
@@ -23,6 +24,9 @@ function resolveFromPage({
     querySelector(selector) {
       if (selector === 'meta[name="citation_pdf_url"]' && citationPdfUrl) {
         return { content: citationPdfUrl };
+      }
+      if (selector === 'meta[name="citation_title"]' && citationTitle) {
+        return { content: citationTitle };
       }
       if (
         selector ===
@@ -175,6 +179,24 @@ test("resolves Nature's article PDF download instead of citation metadata", () =
   );
 });
 
+test("resolves Nature's access-aware article PDF for MHTML capture", () => {
+  const result = resolveFromPage({
+    href: "https://www.nature.com/articles/s41591-026-04539-8",
+    citationTitle: "Toward a test of medical AI superintelligence",
+    downloadPdfUrl:
+      "https://www.nature.com/articles/s41591-026-04539-8.pdf",
+  });
+
+  assert.equal(
+    result.pdfUrl,
+    "https://www.nature.com/articles/s41591-026-04539-8.pdf",
+  );
+  assert.equal(
+    result.pageTitle,
+    "Toward a test of medical AI superintelligence",
+  );
+});
+
 test("rejects cross-origin and non-article PDF candidates", () => {
   const crossOrigin = resolveFromPage({
     href: "https://www.alphaxiv.org/abs/2609.compose-cl",
@@ -185,7 +207,13 @@ test("rejects cross-origin and non-article PDF candidates", () => {
     downloadPdfUrl:
       "https://www.nature.com/articles/s41746-026-03084-5-supplement.pdf",
   });
+  const differentArticle = resolveFromPage({
+    href: "https://www.nature.com/articles/s41746-026-03084-5",
+    downloadPdfUrl:
+      "https://www.nature.com/articles/s41591-026-04539-8.pdf",
+  });
 
   assert.equal(crossOrigin.pdfUrl, null);
   assert.equal(supplement.pdfUrl, null);
+  assert.equal(differentArticle.pdfUrl, null);
 });

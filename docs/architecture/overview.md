@@ -65,7 +65,7 @@ The service worker listens for newly created tabs and waits briefly for Chrome t
 
 Before navigating the blank pane, the worker stores a short-lived attachment task keyed by the exact target tab ID. It then navigates that tab to `https://chatgpt.com/`.
 
-The same worker accepts a named runtime port from the ChatGPT upload content script. It validates the sender tab by looking up only that tab's pending task, fetches the public PDF without credentials, checks its type and size, and streams base64-encoded chunks over the port. For an alphaXiv blog, it prefers a trusted linked paper PDF; if that fetch fails, `pageCapture.saveAsMHTML()` captures the exact source tab and streams the snapshot instead.
+The same worker accepts a named runtime port from the ChatGPT upload content script. It validates the sender tab by looking up only that tab's pending task, fetches the public PDF without credentials, checks its type and size, and streams base64-encoded chunks over the port. For an alphaXiv blog or public Nature PDF, a failed fetch falls back to `pageCapture.saveAsMHTML()` on the exact source tab. A Nature PDF link that depends on the reader's current page access is not fetched by the worker; the already-rendered Nature tab is captured directly instead.
 
 ### `paper-source.js`
 
@@ -73,8 +73,10 @@ Runs only on alphaXiv paper routes, Nature article routes, and X Article routes.
 resolved from validated `citation_pdf_url` metadata; blog pages also expose a
 linked original-paper candidate, their page type, and title. Nature PDFs are resolved
 from the semantic body-PDF download link rather than supplemental-material
-links or the site's misleading citation PDF URL. Resolved URLs are validated
-again by the service worker against the source page hostname and path contract.
+links or the site's misleading citation PDF URL. Both public `_reference.pdf`
+links and access-aware article `.pdf` links must exactly match the current article
+identifier. Resolved URLs are validated again by the service worker against the
+source page hostname and path contract.
 For X, it verifies that the dedicated Article container and a substantial rendered
 body are present; ordinary posts and unrendered loading shells remain unsupported.
 
@@ -165,17 +167,18 @@ The service worker keeps recent candidate tabs, processed tab IDs, and retry tim
 ## Permissions and trust boundaries
 
 - `tabs` is used to inspect tab URLs and `splitViewId`, query Split View peers, and navigate the qualifying blank pane.
-- `pageCapture` captures a matched X Article directly, or the matched alphaXiv
-  blog tab after its paper PDF fails.
+- `pageCapture` captures a matched X Article or access-aware Nature page directly,
+  and captures the matched alphaXiv or Nature tab when its public PDF fetch fails.
 - `storage` is used for user settings, visit history, and short-lived handoff records.
 - `https://arxiv.org/*` permits the first-visit script and background PDF fetch.
 - `https://www.alphaxiv.org/*` permits alphaXiv metadata resolution and public PDF fetches.
 - `https://cdn.openai.com/*` permits the currently supported alphaXiv blog's trusted original-paper fetch without granting all-sites access.
-- `https://www.nature.com/*` permits Nature body-PDF link resolution and public PDF fetches.
+- `https://www.nature.com/*` permits Nature body-PDF link resolution, public PDF
+  fetches, and exact-tab capture of already-rendered article content.
 - `https://x.com/*` permits rendered X Article validation and exact-tab capture; ordinary status routes are rejected.
 - `https://chatgpt.com/*` permits ChatGPT content scripts.
 
-Attachment bytes travel only in extension memory from the supported source to the exact paired ChatGPT tab. ChatGPT then handles the actual external upload. Casimir does not retain the attachment, write it to disk, reuse Nature login credentials, bypass access controls, or send a message. An MHTML attachment contains the alphaXiv or X page content and resources rendered at capture time.
+Attachment bytes travel only in extension memory from the supported source to the exact paired ChatGPT tab. ChatGPT then handles the actual external upload. Casimir does not retain the attachment, write it to disk, read or reuse Nature login credentials, bypass access controls, or send a message. An MHTML attachment contains the alphaXiv, Nature, or X page content and resources rendered at capture time.
 
 ## Limits and brittle interfaces
 
@@ -183,7 +186,9 @@ Attachment bytes travel only in extension memory from the supported source to th
 - Native Split View behavior is currently tested on macOS.
 - A PDF or MHTML transfer is capped at 100 MB.
 - A pending transfer expires after two minutes.
-- Nature support is limited to body PDFs downloadable without authentication.
+- Nature public PDFs are fetched without credentials. When the body PDF depends on
+  institutional access, Casimir captures only the content already rendered in the
+  exact source tab; a preview page therefore remains a preview.
 - alphaXiv and Nature resolution depend on current metadata and semantic download-link contracts.
 - X Article support depends on its dedicated semantic `<article>` remaining available after rendering.
 - ChatGPT file attachment depends on the current `#upload-files` DOM contract.

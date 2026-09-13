@@ -11,8 +11,8 @@ Casimir 是一个个人使用的 Chrome Manifest V3 扩展，为论文阅读与 
 
 - 首次访问 arXiv 摘要页时跳转到对应 PDF，并按论文 ID 记录访问状态。
 - 在受支持的论文页面旁创建 Chrome 原生分屏后，将空白侧栏导航到 ChatGPT。
-- 将匹配的 arXiv、alphaXiv 特殊论文或公开 Nature 正文 PDF 传给准确的 ChatGPT 标签页；
-  alphaXiv 博客的原始论文 PDF 不可用时捕获并传递 MHTML 页面快照。
+- 将匹配的 arXiv、alphaXiv 或 Nature 论文内容传给准确的 ChatGPT 标签页；alphaXiv
+  博客及 Nature 的 PDF 不适合后台直接获取时捕获并传递 MHTML 页面快照。
 - 将已完整渲染的 X Article 直接捕获为 MHTML 并传给准确的 ChatGPT 标签页，普通推文
   不触发。
 - 提供 ChatGPT 新建对话、聚焦输入框、切换侧栏、临时对话及自定义提示词快捷键。
@@ -26,7 +26,8 @@ Casimir 是一个个人使用的 Chrome Manifest V3 扩展，为论文阅读与 
 - PDF 与 MHTML 的内存传输上限为 100 MB，待处理任务两分钟后过期。
 - alphaXiv 博客的外部 PDF 读取维持显式可信主机列表；未知外部主机不会扩大为全站权限，
   而会使用 MHTML 回退。
-- Nature 仅支持无需登录即可下载的正文 PDF，不复用登录状态或处理付费墙。
+- Nature 公开 PDF 不携带凭据获取；依赖机构访问的页面只捕获准确源标签页中已经渲染的
+  内容，不读取登录凭据，也不绕过访问控制。
 - ChatGPT 文件上传与快捷键依赖其当前 DOM 契约，站点更新后可能需要适配。
 - 当前只支持开发者模式加载，尚未配置 Chrome Web Store 发布流程。
 

@@ -108,13 +108,35 @@ function validatedResolvedSource(pageUrl, resolution) {
     }
 
     if (hostname === "www.nature.com") {
+      const articleMatch = /^\/articles\/([^/]+)\/?$/.exec(page.pathname);
+      if (!articleMatch) return null;
+
+      const articleId = articleMatch[1];
       const pdf = new URL(resolution.pdfUrl || "", pageUrl);
       if (
         pdf.protocol === "https:" &&
         pdf.hostname.toLowerCase() === hostname &&
-        /^\/articles\/[^/]+_reference\.pdf$/.test(pdf.pathname)
+        pdf.pathname === `/articles/${articleId}_reference.pdf`
       ) {
-        return { kind: "Nature", sourceUrl: pdf.href };
+        return {
+          kind: "Nature",
+          sourceUrl: pdf.href,
+          fallbackMhtml: true,
+          pageTitle: resolution.pageTitle,
+        };
+      }
+
+      if (
+        pdf.protocol === "https:" &&
+        pdf.hostname.toLowerCase() === hostname &&
+        pdf.pathname === `/articles/${articleId}.pdf`
+      ) {
+        return {
+          kind: "Nature",
+          sourceUrl: null,
+          directMhtml: true,
+          pageTitle: resolution.pageTitle,
+        };
       }
     }
 

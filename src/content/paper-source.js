@@ -47,17 +47,30 @@
     };
   }
 
-  function resolveNaturePdf() {
+  function resolveNatureSource() {
     const candidate = document.querySelector(
       'a[data-test="download-pdf"][data-article-pdf="true"]',
     )?.href;
 
-    return validatedUrl(
-      candidate,
-      (url) =>
-        url.hostname.toLowerCase() === "www.nature.com" &&
-        /^\/articles\/[^/]+_reference\.pdf$/.test(url.pathname),
+    const articleMatch = /^\/articles\/([^/]+)\/?$/.exec(
+      window.location.pathname,
     );
+    const articleId = articleMatch?.[1];
+
+    return {
+      pdfUrl: validatedUrl(
+        candidate,
+        (url) =>
+          Boolean(articleId) &&
+          url.hostname.toLowerCase() === "www.nature.com" &&
+          (url.pathname === `/articles/${articleId}_reference.pdf` ||
+            url.pathname === `/articles/${articleId}.pdf`),
+      ),
+      pageTitle:
+        document.querySelector('meta[name="citation_title"]')?.content ||
+        document.title ||
+        "Nature article",
+    };
   }
 
   function resolveXArticleSource() {
@@ -89,9 +102,7 @@
   function resolveSource() {
     const hostname = window.location.hostname.toLowerCase();
     if (hostname === "www.alphaxiv.org") return resolveAlphaXivSource();
-    if (hostname === "www.nature.com") {
-      return { pdfUrl: resolveNaturePdf() };
-    }
+    if (hostname === "www.nature.com") return resolveNatureSource();
     if (hostname === "x.com") return resolveXArticleSource();
     return { pdfUrl: null };
   }

@@ -64,7 +64,7 @@ Check that:
 
 - Chrome is version 140 or newer.
 - The source is an arXiv PDF, an alphaXiv `/abs/` or `/pdf/` paper, or a Nature
-  article with a public body-PDF download link, or a fully rendered X Article at
+  article with a semantic body-PDF download link, or a fully rendered X Article at
   `x.com/<account>/article/<numeric-id>`.
 - `Cmd+Option+N` creates Chrome's native Split View rather than a normal tab.
 - The new pane was blank and created less than three seconds before Chrome exposed its Split View state.
@@ -79,7 +79,9 @@ Look for `[skip]` and its `reason` field in the service-worker console.
 4. Confirm the ChatGPT page loaded within the two-minute task lifetime.
 5. For alphaXiv papers, confirm `citation_pdf_url` points to an alphaXiv `/abs/*.pdf` URL.
    For alphaXiv blogs, look for `[PDF unavailable; capturing MHTML]` when the trusted linked PDF fails.
-6. For Nature, confirm the article has a public `data-test="download-pdf"` body-PDF link.
+6. For Nature, confirm the article has a `data-test="download-pdf"` body-PDF link.
+   Public PDF failures should log `[PDF unavailable; capturing MHTML]`; an
+   access-aware `.pdf` link should capture the exact Nature tab directly.
 7. For X Article, confirm the page shows the full article heading and body; ordinary `/status/`
    pages intentionally do not trigger.
 8. Inspect the ChatGPT DOM for a file input with ID `upload-files`.

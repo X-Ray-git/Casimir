@@ -531,7 +531,7 @@ test("ignores an ordinary X status page", async () => {
   assert.equal(harness.sessionStorage["pendingPdfUpload:2"], undefined);
 });
 
-test("navigates beside a public Nature article and stores its body PDF", async () => {
+test("stores a public Nature body PDF with an MHTML fallback", async () => {
   const sourceTab = {
     id: 1,
     windowId: 10,
@@ -550,6 +550,8 @@ test("navigates beside a public Nature article and stores its body PDF", async (
     async () => ({
       pdfUrl:
         "https://www.nature.com/articles/s41746-026-03084-5_reference.pdf",
+      pageTitle:
+        "Toward expert-level medical text validation with language models",
     }),
   );
 
@@ -567,6 +569,142 @@ test("navigates beside a public Nature article and stores its body PDF", async (
     harness.sessionStorage["pendingPdfUpload:2"].sourceKind,
     "Nature",
   );
+  assert.equal(
+    harness.sessionStorage["pendingPdfUpload:2"].fallbackMhtml,
+    true,
+  );
+  assert.equal(
+    harness.sessionStorage["pendingPdfUpload:2"].sourceTabId,
+    sourceTab.id,
+  );
+});
+
+test("captures an access-aware Nature article directly as MHTML", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://www.nature.com/articles/s41591-026-04539-8",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  let fetchCalls = 0;
+  const capturedTabIds = [];
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    async () => {
+      fetchCalls += 1;
+      throw new Error("Access-aware Nature PDFs must not be fetched");
+    },
+    async () => ({
+      pdfUrl: "https://www.nature.com/articles/s41591-026-04539-8.pdf",
+      pageTitle: "Toward a test of medical AI superintelligence",
+    }),
+    async ({ tabId }) => {
+      capturedTabIds.push(tabId);
+      return new Blob(["NATURE ARTICLE"], { type: "multipart/related" });
+    },
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  assert.deepEqual(harness.updates, [
+    { tabId: targetTab.id, change: { url: "https://chatgpt.com/" } },
+  ]);
+  const task = harness.sessionStorage["pendingPdfUpload:2"];
+  assert.equal(task.sourceKind, "Nature");
+  assert.equal(task.sourceUrl, null);
+  assert.equal(task.directMhtml, true);
+  assert.equal(task.sourceTabId, sourceTab.id);
+
+  const messages = [];
+  const port = {
+    name: "casimir-attachment-upload",
+    sender: { tab: { id: targetTab.id } },
+    onMessage: event(),
+    postMessage(message) {
+      messages.push(message);
+    },
+    disconnect() {},
+  };
+  harness.onConnect.emit(port);
+  port.onMessage.emit({ type: "claim" });
+  for (let attempt = 0; attempt < 5; attempt += 1) await harness.flush();
+
+  assert.equal(fetchCalls, 0);
+  assert.deepEqual(capturedTabIds, [sourceTab.id]);
+  assert.deepEqual(
+    messages.map((message) => message.type),
+    ["status", "start", "chunk", "done"],
+  );
+  assert.equal(
+    messages[1].filename,
+    "Toward a test of medical AI superintelligence.mhtml",
+  );
+  assert.equal(messages[1].attachmentKind, "MHTML");
+});
+
+test("falls back to the exact Nature tab when a public PDF fetch fails", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://www.nature.com/articles/s41746-026-03084-5",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const capturedTabIds = [];
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    async () => ({
+      ok: false,
+      status: 403,
+      headers: { get() { return null; } },
+    }),
+    async () => ({
+      pdfUrl:
+        "https://www.nature.com/articles/s41746-026-03084-5_reference.pdf",
+      pageTitle:
+        "Toward expert-level medical text validation with language models",
+    }),
+    async ({ tabId }) => {
+      capturedTabIds.push(tabId);
+      return new Blob(["NATURE FALLBACK"], { type: "multipart/related" });
+    },
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  const messages = [];
+  const port = {
+    name: "casimir-attachment-upload",
+    sender: { tab: { id: targetTab.id } },
+    onMessage: event(),
+    postMessage(message) {
+      messages.push(message);
+    },
+    disconnect() {},
+  };
+  harness.onConnect.emit(port);
+  port.onMessage.emit({ type: "claim" });
+  for (let attempt = 0; attempt < 5; attempt += 1) await harness.flush();
+
+  assert.deepEqual(capturedTabIds, [sourceTab.id]);
+  assert.deepEqual(
+    messages.map((message) => message.type),
+    ["status", "status", "start", "chunk", "done"],
+  );
+  assert.equal(messages[2].attachmentKind, "MHTML");
 });
 
 test("rejects a page-provided PDF URL outside its supported source", async () => {

@@ -14,6 +14,12 @@ were developed under the ChatFlow name.
 - Capture a fully rendered X Article directly as MHTML through the exact-tab
   Split View workflow while ignoring ordinary X posts.
 
+### Fixed
+
+- Support Nature article pages whose PDF link depends on the reader's current
+  institutional access by capturing the rendered page as MHTML, and fall back
+  to the same exact-tab capture when a public Nature PDF cannot be fetched.
+
 ## [0.5.0] - 2026-08-12
 
 ### Changed
