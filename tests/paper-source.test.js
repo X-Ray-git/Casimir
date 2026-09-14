@@ -71,6 +71,7 @@ function resolveFromPage({
     },
     document,
     URL,
+    URLSearchParams,
     window: { location },
   });
 
@@ -197,6 +198,33 @@ test("resolves Nature's access-aware article PDF for MHTML capture", () => {
   );
 });
 
+test("resolves ACL Anthology's canonical paper PDF", () => {
+  const result = resolveFromPage({
+    href: "https://aclanthology.org/2026.acl-long.200/",
+    citationPdfUrl: "https://aclanthology.org/2026.acl-long.200.pdf",
+    citationTitle:
+      "Thermometer of Thoughts: Enhancing LLM's Exploration via Attention Temperature Modulation",
+  });
+
+  assert.equal(
+    result.pdfUrl,
+    "https://aclanthology.org/2026.acl-long.200.pdf",
+  );
+});
+
+test("resolves OpenReview's forum paper PDF", () => {
+  const result = resolveFromPage({
+    href: "https://openreview.net/forum?id=x6u2BQ7xcq",
+    citationPdfUrl: "https://openreview.net/pdf?id=x6u2BQ7xcq",
+    citationTitle: "Tag2Text: Guiding Vision-Language Model via Image Tagging",
+  });
+
+  assert.equal(
+    result.pdfUrl,
+    "https://openreview.net/pdf?id=x6u2BQ7xcq",
+  );
+});
+
 test("rejects cross-origin and non-article PDF candidates", () => {
   const crossOrigin = resolveFromPage({
     href: "https://www.alphaxiv.org/abs/2609.compose-cl",
@@ -212,8 +240,19 @@ test("rejects cross-origin and non-article PDF candidates", () => {
     downloadPdfUrl:
       "https://www.nature.com/articles/s41591-026-04539-8.pdf",
   });
+  const aclChecklist = resolveFromPage({
+    href: "https://aclanthology.org/2026.acl-long.200/",
+    citationPdfUrl:
+      "https://aclanthology.org/attachments/2026.acl-long.200.checklist.pdf",
+  });
+  const differentForum = resolveFromPage({
+    href: "https://openreview.net/forum?id=x6u2BQ7xcq",
+    citationPdfUrl: "https://openreview.net/pdf?id=Gd9rjL3Nrf",
+  });
 
   assert.equal(crossOrigin.pdfUrl, null);
   assert.equal(supplement.pdfUrl, null);
   assert.equal(differentArticle.pdfUrl, null);
+  assert.equal(aclChecklist.pdfUrl, null);
+  assert.equal(differentForum.pdfUrl, null);
 });

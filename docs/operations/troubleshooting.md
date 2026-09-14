@@ -5,7 +5,7 @@
 1. Open `chrome://extensions/` and confirm Casimir is enabled.
 2. Confirm the displayed version matches `manifest.json` and the README.
 3. Reload Casimir after source changes.
-4. Refresh already-open ChatGPT and arXiv tabs.
+4. Refresh already-open ChatGPT, arXiv, and supported source tabs.
 5. Keep the old Tampermonkey counterparts disabled while testing Casimir.
 
 ## Log locations
@@ -50,7 +50,7 @@ Prefixes:
 [casimir:chatgpt-attachment-upload]
 ```
 
-### arXiv page
+### arXiv or DAIR.AI page
 
 Prefix:
 
@@ -63,8 +63,9 @@ Prefix:
 Check that:
 
 - Chrome is version 140 or newer.
-- The source is an arXiv PDF, an alphaXiv `/abs/` or `/pdf/` paper, or a Nature
-  article with a semantic body-PDF download link, or a fully rendered X Article at
+- The source is an arXiv PDF, an alphaXiv `/abs/` or `/pdf/` paper, a Nature
+  article with a semantic body-PDF download link, an ACL Anthology paper page,
+  an OpenReview `/forum?id=...` page, or a fully rendered X Article at
   `x.com/<account>/article/<numeric-id>`.
 - `Cmd+Option+N` creates Chrome's native Split View rather than a normal tab.
 - The new pane was blank and created less than three seconds before Chrome exposed its Split View state.
@@ -82,9 +83,11 @@ Look for `[skip]` and its `reason` field in the service-worker console.
 6. For Nature, confirm the article has a `data-test="download-pdf"` body-PDF link.
    Public PDF failures should log `[PDF unavailable; capturing MHTML]`; an
    access-aware `.pdf` link should capture the exact Nature tab directly.
-7. For X Article, confirm the page shows the full article heading and body; ordinary `/status/`
+7. For ACL Anthology, confirm `citation_pdf_url` is the current paper ID plus `.pdf`.
+   For OpenReview, confirm its PDF `id` exactly matches the current forum `id`.
+8. For X Article, confirm the page shows the full article heading and body; ordinary `/status/`
    pages intentionally do not trigger.
-8. Inspect the ChatGPT DOM for a file input with ID `upload-files`.
+9. Inspect the ChatGPT DOM for a file input with ID `upload-files`.
 
 If the worker reports a successful transfer but the attachment is absent, ChatGPT likely changed its file-input DOM or event handling. Capture the page URL, Casimir version, ChatGPT console logs, and the current file-input markup.
 
@@ -110,9 +113,14 @@ Version 0.3.1 and later navigate directly to `https://chatgpt.com/` and no longe
 - Inspect `[casimir:chatgpt-shortcuts]` warnings.
 - For custom shortcuts, reopen `Cmd/Ctrl+Shift+,` and confirm the entry was saved.
 
-## arXiv repeatedly redirects
+## arXiv or DAIR.AI repeatedly redirects
 
-Casimir stores normalized IDs in `arxivVisitedPaperIds`. The Tampermonkey script has separate storage, so do not enable both implementations simultaneously.
+Casimir stores normalized arXiv PDF IDs in `arxivVisitedPaperIds`. Opening an
+arXiv PDF directly, from an arXiv abstract, or from a matching DAIR.AI paper page
+uses the same record. On DAIR.AI, the page URL suffix and its arXiv PDF link must
+contain the same ID; mismatched pages are preserved without redirecting.
+
+The Tampermonkey script has separate storage, so do not enable both implementations simultaneously.
 
 If local extension data was cleared or the extension was uninstalled, papers will be considered unseen again.
 

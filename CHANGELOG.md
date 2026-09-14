@@ -13,6 +13,11 @@ were developed under the ChatFlow name.
   in-memory MHTML snapshot of the matched page when that PDF is unavailable.
 - Capture a fully rendered X Article directly as MHTML through the exact-tab
   Split View workflow while ignoring ordinary X posts.
+- Attach canonical paper PDFs from ACL Anthology paper pages and OpenReview
+  forum pages while rejecting auxiliary or mismatched PDF links.
+- Redirect a first visit to a DAIR.AI paper page to its strictly matched arXiv
+  PDF, sharing normalized PDF visit history with arXiv abstract pages and direct
+  PDF navigation.
 
 ### Fixed
 

@@ -73,6 +73,51 @@
     };
   }
 
+  function citationMetadata() {
+    return {
+      pdfUrl: document.querySelector('meta[name="citation_pdf_url"]')?.content,
+      pageTitle:
+        document.querySelector('meta[name="citation_title"]')?.content ||
+        document.title,
+    };
+  }
+
+  function resolveAclSource() {
+    const paperId = /^\/([^/]+)\/?$/.exec(window.location.pathname)?.[1];
+    const citation = citationMetadata();
+
+    return {
+      pdfUrl: validatedUrl(
+        citation.pdfUrl,
+        (url) =>
+          Boolean(paperId) &&
+          url.hostname.toLowerCase() === "aclanthology.org" &&
+          url.pathname === `/${paperId}.pdf`,
+      ),
+      pageTitle: citation.pageTitle || "ACL Anthology paper",
+    };
+  }
+
+  function resolveOpenReviewSource() {
+    const forumId =
+      window.location.pathname === "/forum"
+        ? new URLSearchParams(window.location.search).get("id")
+        : null;
+    const citation = citationMetadata();
+
+    return {
+      pdfUrl: validatedUrl(
+        citation.pdfUrl,
+        (url) =>
+          Boolean(forumId) &&
+          url.hostname.toLowerCase() === "openreview.net" &&
+          url.pathname === "/pdf" &&
+          url.searchParams.get("id") === forumId,
+      ),
+      pageTitle: citation.pageTitle || "OpenReview paper",
+    };
+  }
+
   function resolveXArticleSource() {
     const article =
       document.querySelector('article[data-testid="twitterArticleReadView"]') ||
@@ -103,6 +148,8 @@
     const hostname = window.location.hostname.toLowerCase();
     if (hostname === "www.alphaxiv.org") return resolveAlphaXivSource();
     if (hostname === "www.nature.com") return resolveNatureSource();
+    if (hostname === "aclanthology.org") return resolveAclSource();
+    if (hostname === "openreview.net") return resolveOpenReviewSource();
     if (hostname === "x.com") return resolveXArticleSource();
     return { pdfUrl: null };
   }

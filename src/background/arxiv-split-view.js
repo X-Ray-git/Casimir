@@ -9,6 +9,7 @@ const PDF_TASK_PREFIX = "pendingPdfUpload:";
 const PDF_TASK_TTL_MS = 2 * 60 * 1000;
 const MAX_PDF_MIB = 100;
 const MAX_PDF_BYTES = MAX_PDF_MIB * 1024 * 1024;
+const ARXIV_VISITED_STORAGE_KEY = "arxivVisitedPaperIds";
 
 // tabId -> { createdAt, windowId, initialUrl, seenSplitViewId, processed }
 const recentTabs = new Map();
@@ -38,6 +39,52 @@ function isArxivPdfUrl(url) {
   }
 }
 
+function arxivPaperIdFromPdfUrl(candidate) {
+  if (!candidate) return null;
+
+  try {
+    const url = new URL(candidate);
+    if (
+      url.protocol !== "https:" ||
+      url.hostname.toLowerCase() !== "arxiv.org"
+    ) {
+      return null;
+    }
+
+    const rawPaperId = url.pathname.match(/^\/pdf\/(.+?)(?:\.pdf)?\/?$/)?.[1];
+    const paperId = rawPaperId?.replace(/v\d+$/i, "");
+    return /^\d{4}\.\d{4,5}$/.test(paperId || "") ||
+      /^[a-z-]+(?:\.[a-z-]+)?\/\d{7}$/i.test(paperId || "")
+      ? paperId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function recordArxivPdfVisit(candidateUrl) {
+  const paperId = arxivPaperIdFromPdfUrl(candidateUrl);
+  if (!paperId) return;
+
+  try {
+    const stored = await chrome.storage.local.get(ARXIV_VISITED_STORAGE_KEY);
+    const visited = Array.isArray(stored[ARXIV_VISITED_STORAGE_KEY])
+      ? stored[ARXIV_VISITED_STORAGE_KEY]
+      : [];
+    if (visited.includes(paperId)) return;
+
+    await chrome.storage.local.set({
+      [ARXIV_VISITED_STORAGE_KEY]: [...visited, paperId],
+    });
+    log("[arXiv PDF visited]", { paperId });
+  } catch (error) {
+    log("[arXiv PDF visit history failed]", {
+      paperId,
+      error: String(error),
+    });
+  }
+}
+
 function isResolvablePaperPageUrl(url) {
   if (!url) return false;
 
@@ -51,6 +98,11 @@ function isResolvablePaperPageUrl(url) {
         /^\/(?:abs|pdf)\/[^/]+\/?$/.test(parsed.pathname)) ||
       (hostname === "www.nature.com" &&
         /^\/articles\/[^/]+\/?$/.test(parsed.pathname)) ||
+      (hostname === "aclanthology.org" &&
+        /^\/[^/]+\/?$/.test(parsed.pathname)) ||
+      (hostname === "openreview.net" &&
+        parsed.pathname === "/forum" &&
+        Boolean(parsed.searchParams.get("id"))) ||
       (hostname === "x.com" &&
         /^\/[^/]+\/article\/\d+\/?$/.test(parsed.pathname))
     );
@@ -136,6 +188,38 @@ function validatedResolvedSource(pageUrl, resolution) {
           sourceUrl: null,
           directMhtml: true,
           pageTitle: resolution.pageTitle,
+        };
+      }
+    }
+
+    if (hostname === "aclanthology.org") {
+      const paperId = /^\/([^/]+)\/?$/.exec(page.pathname)?.[1];
+      const pdf = new URL(resolution.pdfUrl || "", pageUrl);
+      if (
+        paperId &&
+        pdf.protocol === "https:" &&
+        pdf.hostname.toLowerCase() === hostname &&
+        pdf.pathname === `/${paperId}.pdf`
+      ) {
+        return { kind: "ACL Anthology", sourceUrl: pdf.href };
+      }
+    }
+
+    if (hostname === "openreview.net") {
+      const forumId =
+        page.pathname === "/forum" ? page.searchParams.get("id") : null;
+      const pdf = new URL(resolution.pdfUrl || "", pageUrl);
+      if (
+        forumId &&
+        pdf.protocol === "https:" &&
+        pdf.hostname.toLowerCase() === hostname &&
+        pdf.pathname === "/pdf" &&
+        pdf.searchParams.get("id") === forumId
+      ) {
+        return {
+          kind: "OpenReview",
+          sourceUrl: pdf.href,
+          useSiteSession: true,
         };
       }
     }
@@ -240,6 +324,7 @@ async function setPendingPdfUpload(targetTabId, source) {
       sourceTabId: source.sourceTabId,
       fallbackMhtml: source.fallbackMhtml === true,
       directMhtml: source.directMhtml === true,
+      useSiteSession: source.useSiteSession === true,
       pageTitle: source.pageTitle,
       createdAt: Date.now(),
     },
@@ -264,9 +349,14 @@ async function clearPendingPdfUpload(targetTabId) {
 }
 
 function pdfFilename(url) {
-  const pathname = new URL(url).pathname;
+  const parsed = new URL(url);
+  const pathname = parsed.pathname;
   const lastSegment = decodeURIComponent(pathname.split("/").filter(Boolean).pop() || "paper");
-  const basename = lastSegment.replace(/\.pdf$/i, "") || "paper";
+  const queryId = parsed.searchParams.get("id");
+  const basename =
+    lastSegment.toLowerCase() === "pdf" && /^[A-Za-z0-9_-]+$/.test(queryId || "")
+      ? queryId
+      : lastSegment.replace(/\.pdf$/i, "") || "paper";
   return `${basename}.pdf`;
 }
 
@@ -395,7 +485,7 @@ async function transferPdf(port, targetTabId, task) {
     });
     const response = await fetch(task.sourceUrl, {
       cache: "no-store",
-      credentials: "omit",
+      credentials: task.useSiteSession ? "include" : "omit",
     });
     if (!response.ok) throw new Error(`PDF source returned HTTP ${response.status}`);
 
@@ -627,6 +717,8 @@ function scheduleEvaluation(tabId, trigger) {
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.id == null) return;
 
+  void recordArxivPdfVisit(tabUrl(tab));
+
   recentTabs.set(tab.id, {
     createdAt: Date.now(),
     windowId: tab.windowId,
@@ -645,6 +737,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     changeInfo,
     tab: summarizeTab(tab),
   });
+
+  void recordArxivPdfVisit(changeInfo.url || tabUrl(tab));
 
   if (recentTabs.has(tabId)) {
     scheduleEvaluation(tabId, "onUpdated");

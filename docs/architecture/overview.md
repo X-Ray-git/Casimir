@@ -4,9 +4,10 @@
 
 Casimir is a personal Manifest V3 Chrome extension for small, explicit research-reading and ChatGPT workflow automations. It currently performs four jobs:
 
-1. Redirect an arXiv abstract page to its PDF on the first visit to a paper.
+1. Redirect a first visit from an arXiv abstract or matched DAIR.AI paper page
+   to its PDF, using shared PDF visit history across sources.
 2. Turn a newly created blank Chrome Split View pane beside a supported paper into ChatGPT.
-3. Attach the exact arXiv, alphaXiv, or public Nature body PDF to the paired ChatGPT composer without entering a prompt or sending a message, with an MHTML fallback for alphaXiv blogs whose paper PDF is unavailable.
+3. Attach the exact arXiv, alphaXiv, Nature, ACL Anthology, or OpenReview paper content to the paired ChatGPT composer without entering a prompt or sending a message, with scoped MHTML capture for supported page-based fallbacks.
 4. Capture a rendered X Article directly as MHTML for the paired ChatGPT composer.
 
 ChatGPT keyboard shortcuts and local custom prompt shortcuts are a separate page-level module.
@@ -49,9 +50,16 @@ generated icon assets. `assets/icon.svg` is the editable icon source.
 
 ### `arxiv-first-visit.js`
 
-Runs at `document_start` on arXiv abstract pages. It normalizes the paper ID by removing a trailing version suffix, checks local visit history, records an unseen paper, and replaces `/abs/` with `/pdf/`.
+Runs at `document_start` on arXiv abstract pages and at `document_idle` on
+DAIR.AI paper detail pages. It normalizes the paper ID by removing a trailing
+version suffix and checks shared local PDF visit history. An unseen arXiv abstract
+replaces `/abs/` with `/pdf/`. An unseen DAIR.AI page must contain an arXiv PDF
+link whose normalized ID exactly matches the ID suffix in the current DAIR.AI URL;
+it uses ordinary navigation so Back returns to a now-preserved DAIR.AI page.
 
-It never runs on PDF pages and does not share visit history with the old Tampermonkey script.
+The service worker also records arXiv PDF URLs observed in tab navigation, so a
+PDF opened directly or from another source suppresses later automatic redirects.
+This history remains separate from the old Tampermonkey script.
 
 ### `arxiv-split-view.js`
 
@@ -69,7 +77,8 @@ The same worker accepts a named runtime port from the ChatGPT upload content scr
 
 ### `paper-source.js`
 
-Runs only on alphaXiv paper routes, Nature article routes, and X Article routes. alphaXiv PDFs are
+Runs only on alphaXiv paper routes, Nature article routes, ACL Anthology paper routes,
+OpenReview forum routes, and X Article routes. alphaXiv PDFs are
 resolved from validated `citation_pdf_url` metadata; blog pages also expose a
 linked original-paper candidate, their page type, and title. Nature PDFs are resolved
 from the semantic body-PDF download link rather than supplemental-material
@@ -77,6 +86,14 @@ links or the site's misleading citation PDF URL. Both public `_reference.pdf`
 links and access-aware article `.pdf` links must exactly match the current article
 identifier. Resolved URLs are validated again by the service worker against the
 source page hostname and path contract.
+ACL Anthology uses its canonical `citation_pdf_url`, which must be the current
+paper ID plus `.pdf` at the site root. OpenReview uses the same metadata, whose
+`/pdf?id=` value must exactly equal the current `/forum?id=` value. These rules
+exclude ACL checklists and attachments as well as PDFs from other OpenReview notes.
+Because OpenReview may require its browser challenge or site session even for a
+paper PDF, only this exact forum-matched request uses `credentials: "include"`.
+The extension never reads cookie values, and all other PDF sources continue to
+use `credentials: "omit"`.
 For X, it verifies that the dedicated Article container and a substantial rendered
 body are present; ordinary posts and unrendered loading shells remain unsupported.
 
@@ -148,7 +165,7 @@ ChatGPT displays and uploads the attachment
 
 | Key | Owner | Value | Lifetime |
 | --- | --- | --- | --- |
-| `arxivVisitedPaperIds` | arXiv first visit | Array of normalized paper IDs | Until extension data is cleared |
+| `arxivVisitedPaperIds` | arXiv/DAIR.AI first visit and service worker | Array of normalized arXiv PDF IDs | Until extension data is cleared |
 | `casimirCustomShortcuts` | ChatGPT shortcuts | Array of shortcut and prompt records | Until extension data is cleared |
 | `casimirPendingPrompt` | ChatGPT shortcuts | Prompt plus creation timestamp | Consumed within 15 seconds |
 
@@ -175,6 +192,9 @@ The service worker keeps recent candidate tabs, processed tab IDs, and retry tim
 - `https://cdn.openai.com/*` permits the currently supported alphaXiv blog's trusted original-paper fetch without granting all-sites access.
 - `https://www.nature.com/*` permits Nature body-PDF link resolution, public PDF
   fetches, and exact-tab capture of already-rendered article content.
+- `https://aclanthology.org/*` permits canonical public paper-PDF resolution and fetches.
+- `https://openreview.net/*` permits forum-matched paper-PDF resolution and the
+  same-site request needed to satisfy OpenReview's browser access checks.
 - `https://x.com/*` permits rendered X Article validation and exact-tab capture; ordinary status routes are rejected.
 - `https://chatgpt.com/*` permits ChatGPT content scripts.
 
@@ -189,7 +209,8 @@ Attachment bytes travel only in extension memory from the supported source to th
 - Nature public PDFs are fetched without credentials. When the body PDF depends on
   institutional access, Casimir captures only the content already rendered in the
   exact source tab; a preview page therefore remains a preview.
-- alphaXiv and Nature resolution depend on current metadata and semantic download-link contracts.
+- alphaXiv, Nature, ACL Anthology, and OpenReview resolution depend on current
+  metadata or semantic download-link contracts.
 - X Article support depends on its dedicated semantic `<article>` remaining available after rendering.
 - ChatGPT file attachment depends on the current `#upload-files` DOM contract.
 - ChatGPT keyboard actions depend on a small set of current test IDs and accessibility labels.

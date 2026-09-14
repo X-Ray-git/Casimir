@@ -8,22 +8,33 @@ const source = fs.readFileSync(
   "utf8",
 );
 
-async function runScript(url, initialVisited = []) {
+async function runScript(url, initialVisited = [], links = []) {
   const parsed = new URL(url);
   const storage = { arxivVisitedPaperIds: [...initialVisited] };
   const redirects = [];
+  const assignments = [];
 
   const location = {
     href: parsed.href,
+    hostname: parsed.hostname,
     pathname: parsed.pathname,
     replace(target) {
       redirects.push(target);
+    },
+    assign(target) {
+      assignments.push(target);
     },
   };
 
   const context = {
     URL,
     window: { location },
+    document: {
+      querySelectorAll(selector) {
+        assert.equal(selector, 'a[href]');
+        return links.map((href) => ({ href }));
+      },
+    },
     chrome: {
       storage: {
         local: {
@@ -45,7 +56,7 @@ async function runScript(url, initialVisited = []) {
   await new Promise(setImmediate);
   await new Promise(setImmediate);
 
-  return { redirects, storage };
+  return { assignments, redirects, storage };
 }
 
 test("redirects an unseen abstract page to its PDF", async () => {
@@ -74,4 +85,45 @@ test("treats arXiv versions as the same paper", async () => {
   ]);
 
   assert.deepEqual(result.redirects, []);
+});
+
+test("redirects an unseen DAIR.AI paper while preserving browser history", async () => {
+  const result = await runScript(
+    "https://academy.dair.ai/papers/procedural-graphs-self-evolving-execution-structures-for-llm-agents-2609.09153",
+    [],
+    [
+      "https://arxiv.org/abs/2609.09153",
+      "https://arxiv.org/pdf/2609.09153",
+    ],
+  );
+
+  assert.deepEqual(result.redirects, []);
+  assert.deepEqual(result.assignments, [
+    "https://arxiv.org/pdf/2609.09153",
+  ]);
+  assert.deepEqual(Array.from(result.storage.arxivVisitedPaperIds), [
+    "2609.09153",
+  ]);
+});
+
+test("preserves a DAIR.AI paper after its arXiv PDF was visited", async () => {
+  const result = await runScript(
+    "https://academy.dair.ai/papers/frognano-training-a-4b-coding-agent-via-online-task-synthesis-2609.07925",
+    ["2609.07925"],
+    ["https://arxiv.org/pdf/2609.07925"],
+  );
+
+  assert.deepEqual(result.assignments, []);
+  assert.deepEqual(result.redirects, []);
+});
+
+test("does not follow a mismatched arXiv PDF from a DAIR.AI page", async () => {
+  const result = await runScript(
+    "https://academy.dair.ai/papers/procedural-graphs-self-evolving-execution-structures-for-llm-agents-2609.09153",
+    [],
+    ["https://arxiv.org/pdf/2609.07925"],
+  );
+
+  assert.deepEqual(result.assignments, []);
+  assert.deepEqual(result.storage.arxivVisitedPaperIds, []);
 });

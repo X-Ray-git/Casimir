@@ -20,6 +20,8 @@
     "https://cdn.openai.com/*",
     "https://www.alphaxiv.org/*",
     "https://www.nature.com/*",
+    "https://aclanthology.org/*",
+    "https://openreview.net/*",
     "https://x.com/*",
     "https://chatgpt.com/*"
   ],
@@ -32,6 +34,8 @@
         "https://www.alphaxiv.org/abs/*",
         "https://www.alphaxiv.org/pdf/*",
         "https://www.nature.com/articles/*",
+        "https://aclanthology.org/*",
+        "https://openreview.net/forum*",
         "https://x.com/*/article/*"
       ],
       "js": [
@@ -47,6 +51,15 @@
         "src/content/arxiv-first-visit.js"
       ],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://academy.dair.ai/papers/*"
+      ],
+      "js": [
+        "src/content/arxiv-first-visit.js"
+      ],
+      "run_at": "document_idle"
     },
     {
       "matches": [

@@ -40,9 +40,18 @@ function createHarness(
   const onRemoved = event();
   const onConnect = event();
   const sessionStorage = {};
+  const localStorage = {};
 
   const chrome = {
     storage: {
+      local: {
+        async get(key) {
+          return { [key]: localStorage[key] };
+        },
+        async set(update) {
+          Object.assign(localStorage, update);
+        },
+      },
       session: {
         async get(key) {
           return { [key]: sessionStorage[key] };
@@ -117,12 +126,55 @@ function createHarness(
     onConnect,
     onCreated,
     onUpdated,
+    localStorage,
     sessionStorage,
     tabs,
     updates,
     flush,
   };
 }
+
+test("records an arXiv PDF opened from any source", async () => {
+  const pdfTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://arxiv.org/pdf/2609.09153v2",
+    splitViewId: -1,
+  };
+  const harness = createHarness([pdfTab]);
+
+  harness.onCreated.emit(pdfTab);
+  await harness.flush();
+
+  assert.deepEqual(
+    Array.from(harness.localStorage.arxivVisitedPaperIds),
+    ["2609.09153"],
+  );
+});
+
+test("records a direct arXiv PDF navigation without duplicating history", async () => {
+  const tab = {
+    id: 1,
+    windowId: 10,
+    url: "https://example.com/",
+    splitViewId: -1,
+  };
+  const harness = createHarness([tab]);
+  harness.localStorage.arxivVisitedPaperIds = ["2609.09153"];
+  const updatedTab = {
+    ...tab,
+    url: "https://arxiv.org/pdf/2609.09153.pdf",
+  };
+
+  harness.onUpdated.emit(
+    tab.id,
+    { url: updatedTab.url },
+    updatedTab,
+  );
+  await harness.flush();
+
+  assert.deepEqual(harness.localStorage.arxivVisitedPaperIds, ["2609.09153"]);
+});
 
 async function transferWithDeclaredLength(contentLength) {
   const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
@@ -705,6 +757,140 @@ test("falls back to the exact Nature tab when a public PDF fetch fails", async (
     ["status", "status", "start", "chunk", "done"],
   );
   assert.equal(messages[2].attachmentKind, "MHTML");
+});
+
+test("navigates beside an ACL Anthology paper and stores its canonical PDF", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://aclanthology.org/2026.acl-long.200/",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    undefined,
+    async () => ({
+      pdfUrl: "https://aclanthology.org/2026.acl-long.200.pdf",
+    }),
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  assert.deepEqual(harness.updates, [
+    { tabId: targetTab.id, change: { url: "https://chatgpt.com/" } },
+  ]);
+  const task = harness.sessionStorage["pendingPdfUpload:2"];
+  assert.equal(task.sourceKind, "ACL Anthology");
+  assert.equal(
+    task.sourceUrl,
+    "https://aclanthology.org/2026.acl-long.200.pdf",
+  );
+});
+
+test("streams the exact OpenReview forum PDF with a useful filename", async () => {
+  const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://openreview.net/forum?id=x6u2BQ7xcq",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  let fetchOptions = null;
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    async (_url, options) => {
+      fetchOptions = options;
+      return {
+      ok: true,
+      status: 200,
+      body: null,
+      headers: {
+        get(name) {
+          if (name === "content-length") return String(pdfBytes.byteLength);
+          if (name === "content-type") return "application/pdf";
+          return null;
+        },
+      },
+      async arrayBuffer() {
+        return pdfBytes.buffer;
+      },
+      };
+    },
+    async () => ({
+      pdfUrl: "https://openreview.net/pdf?id=x6u2BQ7xcq",
+    }),
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  const task = harness.sessionStorage["pendingPdfUpload:2"];
+  assert.equal(task.sourceKind, "OpenReview");
+  assert.equal(task.sourceUrl, "https://openreview.net/pdf?id=x6u2BQ7xcq");
+  assert.equal(task.useSiteSession, true);
+
+  const messages = [];
+  const port = {
+    name: "casimir-attachment-upload",
+    sender: { tab: { id: targetTab.id } },
+    onMessage: event(),
+    postMessage(message) {
+      messages.push(message);
+    },
+    disconnect() {},
+  };
+  harness.onConnect.emit(port);
+  port.onMessage.emit({ type: "claim" });
+  await harness.flush();
+  await harness.flush();
+
+  assert.deepEqual(
+    messages.map((message) => message.type),
+    ["status", "start", "chunk", "done"],
+  );
+  assert.equal(messages[1].filename, "x6u2BQ7xcq.pdf");
+  assert.equal(fetchOptions.credentials, "include");
+});
+
+test("rejects an OpenReview PDF from a different forum", async () => {
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://openreview.net/forum?id=x6u2BQ7xcq",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    undefined,
+    async () => ({
+      pdfUrl: "https://openreview.net/pdf?id=Gd9rjL3Nrf",
+    }),
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  assert.deepEqual(harness.updates, []);
+  assert.equal(harness.sessionStorage["pendingPdfUpload:2"], undefined);
 });
 
 test("rejects a page-provided PDF URL outside its supported source", async () => {
