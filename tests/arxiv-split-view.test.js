@@ -64,7 +64,7 @@ function createHarness(
         },
       },
     },
-    runtime: { onConnect },
+    runtime: { onConnect, getManifest: () => ({ permissions: [] }) },
     pageCapture: { saveAsMHTML: captureMhtml },
     tabs: {
       SPLIT_VIEW_ID_NONE: -1,
@@ -123,13 +123,18 @@ function createHarness(
   }
 
   return {
+    chrome,
     onConnect,
     onCreated,
     onUpdated,
+    onActivated,
     localStorage,
     sessionStorage,
     tabs,
     updates,
+    runNextTimer() {
+      immediateTimers.shift()?.();
+    },
     flush,
   };
 }
@@ -254,6 +259,86 @@ test("navigates a new blank pane beside an arXiv PDF", async () => {
     harness.sessionStorage["pendingPdfUpload:2"].sourceUrl,
     "https://arxiv.org/pdf/1706.03762",
   );
+});
+
+test("overlapping tab events preserve one navigation and a claimable PDF task", async () => {
+  const sourceTab = {
+    id: 1, windowId: 10, splitViewId: 42,
+    url: "https://arxiv.org/pdf/2609.17523",
+  };
+  const targetTab = {
+    id: 2, windowId: 10, splitViewId: 42,
+    url: "chrome://tab-search.top-chrome/split_new_tab_page.html",
+  };
+  const harness = createHarness([sourceTab, targetTab], async () => ({
+    ok: true,
+    body: null,
+    headers: { get: () => "application/pdf" },
+    arrayBuffer: async () => new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer,
+  }));
+  const get = harness.chrome.tabs.get;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  harness.chrome.tabs.get = async (tabId) => {
+    const snapshot = await get(tabId);
+    await gate;
+    return snapshot;
+  };
+  const update = harness.chrome.tabs.update;
+  let navigationAttempts = 0;
+  harness.chrome.tabs.update = async (...args) => {
+    navigationAttempts += 1;
+    if (navigationAttempts > 1) throw new Error("Navigation rejected.");
+    return update(...args);
+  };
+
+  harness.onCreated.emit(targetTab);
+  harness.runNextTimer();
+  harness.onActivated.emit({ tabId: 2, windowId: 10 });
+  harness.runNextTimer();
+  harness.onUpdated.emit(2, { splitViewId: 42 }, targetTab);
+  harness.runNextTimer();
+  release();
+  await harness.flush();
+
+  assert.equal(navigationAttempts, 1);
+  assert.equal(harness.tabs.get(2).url, "https://chatgpt.com/");
+  assert.equal(harness.sessionStorage["pendingPdfUpload:2"].sourceUrl, sourceTab.url);
+  const messages = [];
+  const port = {
+    name: "casimir-attachment-upload",
+    sender: { tab: { id: 2 } },
+    onMessage: event(),
+    postMessage(message) { messages.push(message); },
+  };
+  harness.onConnect.emit(port);
+  port.onMessage.emit({ type: "claim" });
+  await harness.flush();
+  assert.deepEqual(messages.map((message) => message.type), ["status", "start", "chunk", "done"]);
+  assert.equal(messages[2].data, "JVBERg==");
+  assert.equal(harness.sessionStorage["pendingPdfUpload:2"], undefined);
+});
+
+test("a rejected navigation releases the candidate for a later tab event", async () => {
+  const sourceTab = {
+    id: 1, windowId: 10, splitViewId: 42,
+    url: "https://arxiv.org/pdf/2609.17523",
+  };
+  const targetTab = {
+    id: 2, windowId: 10, splitViewId: 42, url: "chrome://newtab/",
+  };
+  const harness = createHarness([sourceTab, targetTab]);
+  const update = harness.chrome.tabs.update;
+  harness.chrome.tabs.update = async () => { throw new Error("Navigation rejected."); };
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+  assert.equal(harness.sessionStorage["pendingPdfUpload:2"], undefined);
+
+  harness.chrome.tabs.update = update;
+  harness.onActivated.emit({ tabId: 2, windowId: 10 });
+  await harness.flush();
+  assert.equal(harness.updates.length, 1);
+  assert.equal(harness.sessionStorage["pendingPdfUpload:2"].sourceUrl, sourceTab.url);
 });
 
 test("streams the matched arXiv PDF only to the paired ChatGPT tab", async () => {
@@ -631,7 +716,7 @@ test("stores a public Nature body PDF with an MHTML fallback", async () => {
   );
 });
 
-test("captures an access-aware Nature article directly as MHTML", async () => {
+test("falls back to MHTML when a normal Nature PDF path is not public", async () => {
   const sourceTab = {
     id: 1,
     windowId: 10,
@@ -645,12 +730,24 @@ test("captures an access-aware Nature article directly as MHTML", async () => {
     splitViewId: 42,
   };
   let fetchCalls = 0;
+  let fetchUrl = null;
   const capturedTabIds = [];
   const harness = createHarness(
     [sourceTab, targetTab],
-    async () => {
+    async (url) => {
       fetchCalls += 1;
-      throw new Error("Access-aware Nature PDFs must not be fetched");
+      fetchUrl = url;
+      return {
+        ok: true,
+        status: 200,
+        body: null,
+        headers: {
+          get(name) {
+            if (name === "content-type") return "text/html";
+            return null;
+          },
+        },
+      };
     },
     async () => ({
       pdfUrl: "https://www.nature.com/articles/s41591-026-04539-8.pdf",
@@ -670,8 +767,12 @@ test("captures an access-aware Nature article directly as MHTML", async () => {
   ]);
   const task = harness.sessionStorage["pendingPdfUpload:2"];
   assert.equal(task.sourceKind, "Nature");
-  assert.equal(task.sourceUrl, null);
-  assert.equal(task.directMhtml, true);
+  assert.equal(
+    task.sourceUrl,
+    "https://www.nature.com/articles/s41591-026-04539-8.pdf",
+  );
+  assert.equal(task.fallbackMhtml, true);
+  assert.equal(task.directMhtml, false);
   assert.equal(task.sourceTabId, sourceTab.id);
 
   const messages = [];
@@ -688,17 +789,99 @@ test("captures an access-aware Nature article directly as MHTML", async () => {
   port.onMessage.emit({ type: "claim" });
   for (let attempt = 0; attempt < 5; attempt += 1) await harness.flush();
 
-  assert.equal(fetchCalls, 0);
+  assert.equal(fetchCalls, 1);
+  assert.equal(
+    fetchUrl,
+    "https://www.nature.com/articles/s41591-026-04539-8.pdf?error=cookies_not_supported",
+  );
   assert.deepEqual(capturedTabIds, [sourceTab.id]);
+  assert.deepEqual(
+    messages.map((message) => message.type),
+    ["status", "status", "start", "chunk", "done"],
+  );
+  assert.equal(
+    messages[2].filename,
+    "Toward a test of medical AI superintelligence.mhtml",
+  );
+  assert.equal(messages[2].attachmentKind, "MHTML");
+});
+
+test("uploads an older open-access Nature article from its normal PDF path", async () => {
+  const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+  const sourceTab = {
+    id: 1,
+    windowId: 10,
+    url: "https://www.nature.com/articles/s41746-018-0056-y",
+    splitViewId: 42,
+  };
+  const targetTab = {
+    id: 2,
+    windowId: 10,
+    url: "chrome://newtab/",
+    splitViewId: 42,
+  };
+  let captureCalls = 0;
+  let fetchUrl = null;
+  const harness = createHarness(
+    [sourceTab, targetTab],
+    async (url) => {
+      fetchUrl = url;
+      return {
+        ok: true,
+        status: 200,
+        body: null,
+        headers: {
+          get(name) {
+            if (name === "content-length") return String(pdfBytes.byteLength);
+            if (name === "content-type") return "application/pdf";
+            return null;
+          },
+        },
+        async arrayBuffer() {
+          return pdfBytes.buffer;
+        },
+      };
+    },
+    async () => ({
+      pdfUrl: "https://www.nature.com/articles/s41746-018-0056-y.pdf",
+      pageTitle:
+        "Sociomarkers and biomarkers: predictive modeling in identifying pediatric asthma patients at risk of hospital revisits",
+    }),
+    async () => {
+      captureCalls += 1;
+      throw new Error("Public Nature PDF must not capture MHTML");
+    },
+  );
+
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+
+  const messages = [];
+  const port = {
+    name: "casimir-attachment-upload",
+    sender: { tab: { id: targetTab.id } },
+    onMessage: event(),
+    postMessage(message) {
+      messages.push(message);
+    },
+    disconnect() {},
+  };
+  harness.onConnect.emit(port);
+  port.onMessage.emit({ type: "claim" });
+  await harness.flush();
+  await harness.flush();
+
+  assert.equal(captureCalls, 0);
+  assert.equal(
+    fetchUrl,
+    "https://www.nature.com/articles/s41746-018-0056-y.pdf?error=cookies_not_supported",
+  );
   assert.deepEqual(
     messages.map((message) => message.type),
     ["status", "start", "chunk", "done"],
   );
-  assert.equal(
-    messages[1].filename,
-    "Toward a test of medical AI superintelligence.mhtml",
-  );
-  assert.equal(messages[1].attachmentKind, "MHTML");
+  assert.equal(messages[1].filename, "s41746-018-0056-y.pdf");
+  assert.equal(messages[1].attachmentKind, "PDF");
 });
 
 test("falls back to the exact Nature tab when a public PDF fetch fails", async () => {
@@ -1083,4 +1266,73 @@ test("recognizes Chrome's native Split View placeholder page", async () => {
   assert.deepEqual(harness.updates, [
     { tabId: targetTab.id, change: { url: "https://chatgpt.com/" } },
   ]);
+});
+
+async function runBrowserFocus({ approved = true, active = true, paired = true,
+  focusedWindow = true, ready = true, attachFails = false, focusFails = false,
+  switchAfterAttach = false } = {}) {
+  const sourceTab = { id: 1, windowId: 10, splitViewId: 42,
+    url: "https://arxiv.org/pdf/2609.17523" };
+  const targetTab = { id: 2, windowId: 10, splitViewId: 42,
+    url: "chrome://newtab/", active };
+  const harness = createHarness([sourceTab, targetTab]);
+  harness.chrome.runtime.getManifest = () => ({ permissions: approved ? ["debugger"] : [] });
+  harness.chrome.windows = { get: async () => ({ focused: focusedWindow }) };
+  const commands = [];
+  harness.chrome.debugger = {
+    async attach(target) {
+      assert.equal(target.tabId, 2);
+      commands.push("attach");
+      if (attachFails) throw new Error("Another debugger is attached");
+      if (switchAfterAttach) harness.tabs.get(2).active = false;
+    },
+    async sendCommand(target, method) {
+      assert.equal(target.tabId, 2);
+      commands.push(method);
+      if (focusFails && method === "Page.bringToFront") throw new Error("Target closed");
+      return { result: { value: ready } };
+    },
+    async detach(target) { assert.equal(target.tabId, 2); commands.push("detach"); },
+  };
+  // Use the task produced by real split detection, not a hand-built fixture.
+  harness.onCreated.emit(targetTab);
+  await harness.flush();
+  assert.equal(harness.sessionStorage["pendingPdfUpload:2"].sourceTabId, sourceTab.id);
+  assert.equal(harness.tabs.get(2).url, "https://chatgpt.com/");
+  if (!paired) harness.tabs.get(2).splitViewId = 43;
+  const messages = [];
+  const port = { name: "casimir-attachment-upload", sender: { tab: { id: 2 } },
+    onMessage: event(), postMessage(message) { messages.push(message); } };
+  harness.onConnect.emit(port);
+  // An unsolicited readiness event must never authorize a debugger connection.
+  port.onMessage.emit({ type: "composer-ready" });
+  await harness.flush();
+  assert.deepEqual(commands, []);
+  port.onMessage.emit({ type: "claim" });
+  await harness.flush();
+  port.onMessage.emit({ type: "composer-ready" });
+  port.onMessage.emit({ type: "composer-ready" });
+  await harness.flush();
+  return { commands, messages };
+}
+
+test("browser focus runs once for the exact paired target and detaches", async () => {
+  const { commands } = await runBrowserFocus();
+  assert.deepEqual(commands, ["attach", "Runtime.evaluate", "Page.bringToFront", "Runtime.evaluate", "detach"]);
+});
+
+test("browser focus remains disabled without approval or after switching away", async () => {
+  for (const options of [{ approved: false }, { active: false }, { paired: false }, { focusedWindow: false }]) {
+    const result = await runBrowserFocus(options);
+    assert.deepEqual(result.commands, []);
+    if (options.approved === false) assert.equal(result.messages.some(m => m.type === "prepare-focus"), false);
+  }
+  assert.deepEqual((await runBrowserFocus({ switchAfterAttach: true })).commands, ["attach", "detach"]);
+});
+
+test("browser focus cleans up failures without detaching another debugger", async () => {
+  assert.deepEqual((await runBrowserFocus({ attachFails: true })).commands, ["attach"]);
+  assert.deepEqual((await runBrowserFocus({ ready: false })).commands, ["attach", "Runtime.evaluate", "detach"]);
+  assert.deepEqual((await runBrowserFocus({ focusFails: true })).commands,
+    ["attach", "Runtime.evaluate", "Page.bringToFront", "detach"]);
 });

@@ -74,6 +74,36 @@ Look for `[skip]` and its `reason` field in the service-worker console.
 
 ## ChatGPT opens but the attachment is missing
 
+Repeated `[matched paper]` messages for the same target followed by one
+`[update to ChatGPT]` and `Navigation rejected.` errors can indicate an older
+concurrent-evaluation bug: a failed duplicate navigation removed the pending
+upload task, so ChatGPT showed no attachment status. Reload Casimir with the
+fixed source and create a fresh split pane; refreshing the old ChatGPT pane
+cannot restore a deleted task. The worker now serializes candidate evaluation.
+
+## ChatGPT opens but the address bar keeps focus
+
+This is separate from attachment transfer. In the user's Chrome, a fresh native
+split beside `https://arxiv.org/pdf/2609.17523` successfully displayed the PDF
+attachment while the address bar remained selected. Page-level focus requests
+and an extension redirect bridge did not resolve it; the bridge also caused a
+white flash and has been removed. Direct navigation is restored. The current
+browser-level focus implementation was reported working by the user on 2026-09-17,
+with logs confirming focus and debugger detachment. If it is skipped or fails,
+clicking the composer remains a manual fallback. The Node harness does not exercise
+Chrome's native focus.
+
+For browser-level focus, keep the worker inspector open **before**
+creating a fresh split. The console now records `[composer focus offered]` (including
+whether the loaded manifest enables the feature), `[composer focus requested]`,
+or `[composer focus preparation skipped]` with a cancellation/timeout reason.
+Subsequent `[composer focus skipped]`, `[composer focus failed]`, `[composer focus]`,
+and `[composer focus detached]` describe the browser step. A successful PDF transfer
+alone does not prove focus succeeded. Query `chrome.runtime.getManifest().permissions`
+in the worker console to check the manifest actually loaded by Chrome.
+
+## Attachment checks
+
 1. Check the ChatGPT page for a Casimir status message.
 2. Check the service worker for `[PDF transferred]`, `[MHTML transferred]`, or `[PDF transfer failed]`.
 3. Confirm the PDF or MHTML is no larger than Casimir's 100 MB automatic transfer limit.
@@ -81,8 +111,8 @@ Look for `[skip]` and its `reason` field in the service-worker console.
 5. For alphaXiv papers, confirm `citation_pdf_url` points to an alphaXiv `/abs/*.pdf` URL.
    For alphaXiv blogs, look for `[PDF unavailable; capturing MHTML]` when the trusted linked PDF fails.
 6. For Nature, confirm the article has a `data-test="download-pdf"` body-PDF link.
-   Public PDF failures should log `[PDF unavailable; capturing MHTML]`; an
-   access-aware `.pdf` link should capture the exact Nature tab directly.
+   Any HTTP failure or non-PDF response should log
+   `[PDF unavailable; capturing MHTML]` before the exact Nature tab is captured.
 7. For ACL Anthology, confirm `citation_pdf_url` is the current paper ID plus `.pdf`.
    For OpenReview, confirm its PDF `id` exactly matches the current forum `id`.
 8. For X Article, confirm the page shows the full article heading and body; ordinary `/status/`

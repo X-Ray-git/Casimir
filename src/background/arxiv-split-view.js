@@ -16,6 +16,73 @@ const recentTabs = new Map();
 const processedTabIds = new Set();
 const retryTimers = new Map();
 
+function browserFocusEnabled() {
+  // Builds without the debugger permission keep ordinary attachment delivery.
+  return chrome.runtime.getManifest().permissions?.includes("debugger") === true;
+}
+
+async function focusPairedComposer(targetTabId, task) {
+  if (!browserFocusEnabled()) return;
+  const target = { tabId: targetTabId };
+  let attached = false;
+  async function stillPairedAndActive() {
+    const tab = await chrome.tabs.get(targetTabId);
+    const source = await chrome.tabs.get(task.sourceTabId);
+    const window = await chrome.windows.get(tab.windowId);
+    return tab.active && window.focused && isChatGptUrl(tabUrl(tab)) &&
+      hasValidSplitViewId(tab) && tab.splitViewId === source.splitViewId &&
+      tab.windowId === source.windowId &&
+      Date.now() - task.createdAt < PDF_TASK_TTL_MS;
+  }
+
+  try {
+    if (!await stillPairedAndActive()) {
+      log("[composer focus skipped]", { targetTabId, reason: "target no longer paired and active" });
+      return;
+    }
+    await chrome.debugger.attach(target, "1.3");
+    attached = true;
+    if (!await stillPairedAndActive()) return;
+    const ready = await chrome.debugger.sendCommand(target, "Runtime.evaluate", {
+      expression: `(() => {
+        const input = document.getElementById("prompt-textarea");
+        const composer = document.querySelector('form[data-type="unified-composer"]');
+        const active = document.activeElement;
+        return !document.hidden && !navigator.userActivation.hasBeenActive &&
+          !!input && !!composer?.contains(input) && !!input.getClientRects().length &&
+          (!active || active === document.body || active === input);
+      })()`,
+      returnByValue: true,
+    });
+    if (ready?.result?.value !== true) {
+      log("[composer focus skipped]", { targetTabId, reason: "composer not eligible", ready });
+      return;
+    }
+    await chrome.debugger.sendCommand(target, "Page.bringToFront");
+    const result = await chrome.debugger.sendCommand(target, "Runtime.evaluate", {
+      expression: `(() => {
+        const input = document.getElementById("prompt-textarea");
+        if (!input || document.hidden || navigator.userActivation.hasBeenActive) return false;
+        input.focus({preventScroll: true});
+        return document.hasFocus() && document.activeElement === input;
+      })()`,
+      returnByValue: true,
+    });
+    log("[composer focus]", { targetTabId, focused: result?.result?.value === true });
+  } catch (error) {
+    log("[composer focus failed]", { targetTabId, error: String(error) });
+  } finally {
+    if (attached) {
+      try {
+        await chrome.debugger.detach(target);
+        log("[composer focus detached]", { targetTabId });
+      } catch (error) {
+        log("[composer focus detach failed]", { targetTabId, error: String(error) });
+      }
+    }
+  }
+}
+
 function log(event, details = {}) {
   console.log(`${LOG_PREFIX} ${event}`, details);
 }
@@ -185,8 +252,8 @@ function validatedResolvedSource(pageUrl, resolution) {
       ) {
         return {
           kind: "Nature",
-          sourceUrl: null,
-          directMhtml: true,
+          sourceUrl: pdf.href,
+          fallbackMhtml: true,
           pageTitle: resolution.pageTitle,
         };
       }
@@ -246,7 +313,7 @@ function validatedResolvedSource(pageUrl, resolution) {
 async function resolvePdfSource(tab) {
   const pageUrl = tabUrl(tab);
   if (isArxivPdfUrl(pageUrl)) {
-    return { kind: "arXiv", sourceUrl: pageUrl };
+    return { kind: "arXiv", sourceUrl: pageUrl, sourceTabId: tab.id };
   }
   if (!isResolvablePaperPageUrl(pageUrl)) return null;
 
@@ -358,6 +425,16 @@ function pdfFilename(url) {
       ? queryId
       : lastSegment.replace(/\.pdf$/i, "") || "paper";
   return `${basename}.pdf`;
+}
+
+function pdfFetchUrl(task) {
+  if (task.sourceKind !== "Nature") return task.sourceUrl;
+
+  const url = new URL(task.sourceUrl);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("error", "cookies_not_supported");
+  return url.href;
 }
 
 function bytesToBase64(bytes) {
@@ -478,12 +555,14 @@ async function transferPdf(port, targetTabId, task) {
   try {
     if (!task.sourceUrl) throw new Error("No usable PDF source was found");
 
+    const fetchUrl = pdfFetchUrl(task);
+
     port.postMessage({
       type: "status",
       status: "fetching",
       sourceKind: task.sourceKind || "paper source",
     });
-    const response = await fetch(task.sourceUrl, {
+    const response = await fetch(fetchUrl, {
       cache: "no-store",
       credentials: task.useSiteSession ? "include" : "omit",
     });
@@ -600,7 +679,19 @@ async function evaluateCandidate(tabId, trigger) {
   const candidate = recentTabs.get(tabId);
   if (!candidate) return;
 
-  if (candidate.processed || processedTabIds.has(tabId)) return;
+  if (candidate.evaluating || candidate.processed || processedTabIds.has(tabId)) return;
+
+  // Acquire before the first await: tab events can overlap during source lookup.
+  // Keep ownership through navigation and failure cleanup of the pending task.
+  candidate.evaluating = true;
+  try {
+    await evaluateLockedCandidate(tabId, trigger, candidate);
+  } finally {
+    candidate.evaluating = false;
+  }
+}
+
+async function evaluateLockedCandidate(tabId, trigger, candidate) {
 
   let tab;
   try {
@@ -679,7 +770,7 @@ async function evaluateCandidate(tabId, trigger) {
     return;
   }
 
-  // Mark first so overlapping tab events cannot issue duplicate navigations.
+  // Once matched, future evaluations must leave this handoff alone.
   candidate.processed = true;
   processedTabIds.add(tabId);
   clearRetryTimers(tabId);
@@ -767,7 +858,22 @@ chrome.runtime.onConnect.addListener((port) => {
   }
 
   let started = false;
+  let matchedTask = null;
+  let focusRequested = false;
   port.onMessage.addListener((message) => {
+    if (message?.type === "composer-focus-skipped") {
+      if (matchedTask && !focusRequested) {
+        log("[composer focus preparation skipped]", { targetTabId, reason: message.reason });
+      }
+      return;
+    }
+    if (message?.type === "composer-ready") {
+      if (!matchedTask || focusRequested || !browserFocusEnabled()) return;
+      focusRequested = true;
+      log("[composer focus requested]", { targetTabId });
+      void focusPairedComposer(targetTabId, matchedTask);
+      return;
+    }
     if (message?.type !== "claim" || started) return;
     started = true;
 
@@ -776,6 +882,10 @@ chrome.runtime.onConnect.addListener((port) => {
         port.postMessage({ type: "none" });
         return;
       }
+      matchedTask = task;
+      const focusEnabled = browserFocusEnabled();
+      log("[composer focus offered]", { targetTabId, enabled: focusEnabled });
+      if (focusEnabled) port.postMessage({ type: "prepare-focus" });
       return transferPdf(port, targetTabId, task);
     });
   });

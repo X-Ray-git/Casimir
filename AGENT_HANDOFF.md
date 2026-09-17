@@ -10,6 +10,10 @@
 3. [架构概览](docs/architecture/overview.md)。
 4. 当前任务对应的开发或故障排查页面。
 
+维护分屏、附件或焦点前，另读
+[2026-09-17 排查记录](docs/operations/2026-09-17-split-view-investigation.md)，
+其中记录已撤除的失败方案、debugger 授权边界与真实验证限制，避免重复试错。
+
 当前约束：
 
 - 仓库根目录就是 Chrome 的“加载已解压的扩展程序”目录，`manifest.json` 不移入构建目录。

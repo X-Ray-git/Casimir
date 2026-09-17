@@ -25,10 +25,16 @@ async function runPdfInjection({
   filename = "1706.03762.pdf",
   contentType = "application/pdf",
   attachmentKind = "PDF",
+  prepareFocus = false,
+  userInteracts = false,
+  promptDelay = 0,
+  visibilityTransition = null,
 } = {}) {
   const dispatchedEvents = [];
   let attachmentVisible = false;
   let changeCount = 0;
+  let ticks = 0;
+  const listeners = new Map();
 
   class FakeElement {}
   class FakeInput extends FakeElement {}
@@ -50,9 +56,10 @@ async function runPdfInjection({
       return name === "aria-label" ? filename : null;
     },
   };
+  const prompt = { getClientRects: () => [{}] };
   const composer = {
     contains(candidate) {
-      return candidate === input;
+      return candidate === input || candidate === prompt;
     },
     querySelectorAll() {
       return attachmentVisible ? [attachment] : [];
@@ -97,6 +104,7 @@ async function runPdfInjection({
   const port = {
     onMessage,
     postMessage(message) {
+      assert.equal(disconnected, false, "readiness must arrive before the upload port closes");
       sentMessages.push(message);
     },
     disconnect() {
@@ -105,8 +113,15 @@ async function runPdfInjection({
   };
 
   const document = {
+    hidden: visibilityTransition === "shown",
+    addEventListener(type, listener) {
+      listeners.set(type, listener);
+      if (userInteracts && type === "keydown") listener();
+    },
+    removeEventListener(type) { listeners.delete(type); },
     documentElement: { appendChild() {} },
     getElementById(id) {
+      if (id === "prompt-textarea") return ticks >= promptDelay ? prompt : null;
       return id === "upload-files" ? input : null;
     },
     querySelector(selector) {
@@ -132,8 +147,19 @@ async function runPdfInjection({
     HTMLInputElement: FakeInput,
     Uint8Array,
     window: {
-      setTimeout(callback) {
-        callback();
+      setTimeout(callback, delay) {
+        if (delay === 100) {
+          setImmediate(() => {
+            ticks += 1;
+            if (ticks === 1 && visibilityTransition) {
+              document.hidden = visibilityTransition === "hidden";
+              listeners.get("visibilitychange")?.();
+            }
+            callback();
+          });
+        } else {
+          callback();
+        }
       },
     },
   });
@@ -141,6 +167,10 @@ async function runPdfInjection({
   assert.equal(sentMessages.length, 1);
   assert.equal(sentMessages[0].type, "claim");
 
+  if (prepareFocus) {
+    onMessage.emit({ type: "prepare-focus" });
+    onMessage.emit({ type: "prepare-focus" });
+  }
   onMessage.emit({
     type: "start",
     filename,
@@ -149,11 +179,12 @@ async function runPdfInjection({
   });
   onMessage.emit({ type: "chunk", data: "JVBERg==" });
   onMessage.emit({ type: "done", totalBytes: 4 });
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 250 && !disconnected; attempt += 1) {
     await new Promise(setImmediate);
   }
 
   return {
+    sentMessages,
     changeCount,
     disconnected,
     dispatchedEvents,
@@ -180,6 +211,41 @@ test("replays a missed ChatGPT file change event once", async () => {
   assert.equal(result.changeCount, 2);
   assert.deepEqual(result.dispatchedEvents, ["input", "change", "change"]);
   assert.match(result.statusHost.textContent, /^PDF 已添加：/);
+  assert.equal(result.disconnected, true);
+});
+
+test("requests browser focus once only when offered and without page interaction", async () => {
+  const ready = await runPdfInjection({ prepareFocus: true });
+  assert.equal(ready.sentMessages.filter(m => m.type === "composer-ready").length, 1);
+  assert.match(ready.statusHost.textContent, /^PDF 已添加：/);
+  for (const options of [{}, { prepareFocus: true, userInteracts: true }]) {
+    const result = await runPdfInjection(options);
+    assert.equal(result.sentMessages.some(m => m.type === "composer-ready"), false);
+  }
+});
+
+test("keeps the port open when the prompt mounts after attachment confirmation", async () => {
+  const result = await runPdfInjection({ prepareFocus: true, promptDelay: 3 });
+  assert.equal(result.sentMessages.filter(m => m.type === "composer-ready").length, 1);
+  assert.match(result.statusHost.textContent, /^PDF 已添加：/);
+  assert.equal(result.disconnected, true);
+});
+
+test("allows initial visibility but cancels focus when the page is hidden", async () => {
+  const shown = await runPdfInjection({ prepareFocus: true, visibilityTransition: "shown" });
+  assert.equal(shown.sentMessages.filter(m => m.type === "composer-ready").length, 1);
+  const hidden = await runPdfInjection({
+    prepareFocus: true, promptDelay: 3, visibilityTransition: "hidden",
+  });
+  assert.equal(hidden.sentMessages.some(m => m.type === "composer-ready"), false);
+  assert.equal(hidden.sentMessages.find(m => m.type === "composer-focus-skipped").reason, "page hidden");
+  assert.equal(hidden.disconnected, true);
+});
+
+test("reports a missing composer and closes the port after the bounded wait", async () => {
+  const result = await runPdfInjection({ prepareFocus: true, promptDelay: Infinity });
+  assert.equal(result.sentMessages.some(m => m.type === "composer-ready"), false);
+  assert.equal(result.sentMessages.find(m => m.type === "composer-focus-skipped").reason, "composer timeout");
   assert.equal(result.disconnected, true);
 });
 

@@ -10,6 +10,43 @@
   const chunks = [];
   let metadata = null;
   let statusHost = null;
+  let focusPrepared = false;
+  let focusPreparation = Promise.resolve();
+
+  async function prepareComposerFocus() {
+    if (focusPrepared) return;
+    focusPrepared = true;
+    let cancelled = null;
+    const cancel = () => { cancelled = "user interaction"; };
+    const onVisibilityChange = () => {
+      if (document.hidden) cancelled = "page hidden";
+    };
+    document.addEventListener("pointerdown", cancel, true);
+    document.addEventListener("keydown", cancel, true);
+    document.addEventListener("visibilitychange", onVisibilityChange, true);
+    try {
+      // Upload controls can mount before the editable composer. Wait for both.
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (cancelled) break;
+        const input = document.getElementById("upload-files");
+        const prompt = document.getElementById("prompt-textarea");
+        const composer = document.querySelector(COMPOSER_SELECTOR);
+        if (uploadInputIsReady(input) && prompt && composer?.contains(prompt) &&
+            prompt.getClientRects().length && !document.hidden) {
+          port.postMessage({ type: "composer-ready" });
+          return;
+        }
+        await new Promise(resolve => window.setTimeout(resolve, 100));
+      }
+      port.postMessage({ type: "composer-focus-skipped", reason: cancelled || "composer timeout" });
+    } catch (error) {
+      console.log(LOG_PREFIX, "Composer focus request skipped.", String(error));
+    } finally {
+      document.removeEventListener("pointerdown", cancel, true);
+      document.removeEventListener("keydown", cancel, true);
+      document.removeEventListener("visibilitychange", onVisibilityChange, true);
+    }
+  }
 
   function showStatus(message, kind = "progress", autoHide = false) {
     if (!statusHost) {
@@ -158,6 +195,10 @@
 
   const port = chrome.runtime.connect({ name: PORT_NAME });
   port.onMessage.addListener((message) => {
+    if (message?.type === "prepare-focus") {
+      if (!focusPrepared) focusPreparation = prepareComposerFocus();
+      return;
+    }
     if (message?.type === "none") {
       port.disconnect();
       return;
@@ -194,7 +235,11 @@
             true,
           );
         })
-        .finally(() => port.disconnect());
+        .finally(async () => {
+          // A fast upload must not close the port while the composer is mounting.
+          await focusPreparation;
+          port.disconnect();
+        });
       return;
     }
     if (message?.type === "error") {

@@ -10,6 +10,12 @@
 3. [本地开发](operations/development.md)
 4. [故障排查](operations/troubleshooting.md)
 
+## 专题与修改背景
+
+- [浏览器级聚焦：实现与验证](operations/browser-focus-prototype.md)：当前行为、权限边界与验收。
+- [2026-09-17 分屏附件与焦点排查记录](operations/2026-09-17-split-view-investigation.md)：
+  初始故障、证据链、失败方案、Chrome 更新假设、授权讨论、测试遗漏及最终验证。
+
 ## 维护规则
 
 - 用户可见行为、权限或兼容性发生变化时，同步更新 README、架构文档和当前状态。

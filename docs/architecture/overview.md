@@ -71,9 +71,14 @@ The service worker listens for newly created tabs and waits briefly for Chrome t
 - its URL is still a recognized blank or Chrome Split View placeholder page; and
 - another tab in the same Split View resolves to a supported paper PDF.
 
-Before navigating the blank pane, the worker stores a short-lived attachment task keyed by the exact target tab ID. It then navigates that tab to `https://chatgpt.com/`.
+Before navigating the blank pane, the worker stores a short-lived attachment task keyed by the exact target tab ID. It then navigates that tab directly to `https://chatgpt.com/`.
 
-The same worker accepts a named runtime port from the ChatGPT upload content script. It validates the sender tab by looking up only that tab's pending task, fetches the public PDF without credentials, checks its type and size, and streams base64-encoded chunks over the port. For an alphaXiv blog or public Nature PDF, a failed fetch falls back to `pageCapture.saveAsMHTML()` on the exact source tab. A Nature PDF link that depends on the reader's current page access is not fetched by the worker; the already-rendered Nature tab is captured directly instead.
+Each candidate allows only one evaluation in flight, starting before the first
+asynchronous lookup and ending after navigation or failure cleanup. Overlapping
+tab events cannot repeat navigation or delete another evaluation's upload task;
+an unsuccessful evaluation releases the guard so later events can retry.
+
+The same worker accepts a named runtime port from the ChatGPT upload content script. It validates the sender tab by looking up only that tab's pending task, fetches the public PDF without credentials, checks its type and size, and streams base64-encoded chunks over the port. Strictly matched Nature PDF requests add Nature's same-origin `error=cookies_not_supported` return hint so a public file can be reached without following the initial redirect through `idp.nature.com`; the response still must identify itself as a PDF. For an alphaXiv blog or any Nature body-PDF URL, a failed fetch or non-PDF response falls back to `pageCapture.saveAsMHTML()` on the exact source tab. Nature filename conventions are not treated as proof of whether a PDF is public.
 
 ### `paper-source.js`
 
@@ -83,7 +88,7 @@ resolved from validated `citation_pdf_url` metadata; blog pages also expose a
 linked original-paper candidate, their page type, and title. Nature PDFs are resolved
 from the semantic body-PDF download link rather than supplemental-material
 links or the site's misleading citation PDF URL. Both public `_reference.pdf`
-links and access-aware article `.pdf` links must exactly match the current article
+links and normal article `.pdf` links must exactly match the current article
 identifier. Resolved URLs are validated again by the service worker against the
 source page hostname and path contract.
 ACL Anthology uses its canonical `citation_pdf_url`, which must be the current
@@ -100,6 +105,18 @@ body are present; ordinary posts and unrendered loading shells remain unsupporte
 ### `chatgpt-pdf-upload.js`
 
 Runs on ChatGPT and claims a pending attachment task for its own tab. Tabs without a matching task receive no data and exit immediately.
+
+Chrome may retain address-bar focus after Split View navigation. Browser-focus
+restoration waits for composer readiness, validates the exact active split target,
+and uses a short-lived debugger connection to bring the page forward and focus
+the composer. The required `debugger` manifest permission has been added with
+user approval. On 2026-09-17 the user reported success in Chrome, with worker logs
+confirming `focused: true`, detachment, and PDF transfer. This is a verified case,
+not a guarantee across Chrome versions; simulated tests alone cannot validate native focus.
+Readiness waits for both upload controls and the visible prompt; attachment completion
+does not disconnect the port until that bounded preparation finishes. Page interaction
+or a transition to hidden cancels preparation. Offers, requests, and preparation
+skips are logged in the service worker alongside browser-focus results.
 
 For a matching task, the script:
 
@@ -184,14 +201,15 @@ The service worker keeps recent candidate tabs, processed tab IDs, and retry tim
 ## Permissions and trust boundaries
 
 - `tabs` is used to inspect tab URLs and `splitViewId`, query Split View peers, and navigate the qualifying blank pane.
-- `pageCapture` captures a matched X Article or access-aware Nature page directly,
-  and captures the matched alphaXiv or Nature tab when its public PDF fetch fails.
+- `pageCapture` captures a matched X Article directly, and captures the matched
+  alphaXiv or Nature tab when its PDF fetch fails or returns non-PDF content.
 - `storage` is used for user settings, visit history, and short-lived handoff records.
 - `https://arxiv.org/*` permits the first-visit script and background PDF fetch.
 - `https://www.alphaxiv.org/*` permits alphaXiv metadata resolution and public PDF fetches.
 - `https://cdn.openai.com/*` permits the currently supported alphaXiv blog's trusted original-paper fetch without granting all-sites access.
 - `https://www.nature.com/*` permits Nature body-PDF link resolution, public PDF
-  fetches, and exact-tab capture of already-rendered article content.
+  fetches through its same-origin no-cookie return path, and exact-tab capture of
+  already-rendered article content. No permission is granted to `idp.nature.com`.
 - `https://aclanthology.org/*` permits canonical public paper-PDF resolution and fetches.
 - `https://openreview.net/*` permits forum-matched paper-PDF resolution and the
   same-site request needed to satisfy OpenReview's browser access checks.
@@ -206,9 +224,9 @@ Attachment bytes travel only in extension memory from the supported source to th
 - Native Split View behavior is currently tested on macOS.
 - A PDF or MHTML transfer is capped at 100 MB.
 - A pending transfer expires after two minutes.
-- Nature public PDFs are fetched without credentials. When the body PDF depends on
-  institutional access, Casimir captures only the content already rendered in the
-  exact source tab; a preview page therefore remains a preview.
+- Nature body PDFs are always tried without credentials. When the response is not
+  a valid PDF, Casimir captures only the content already rendered in the exact
+  source tab; a preview page therefore remains a preview.
 - alphaXiv, Nature, ACL Anthology, and OpenReview resolution depend on current
   metadata or semantic download-link contracts.
 - X Article support depends on its dedicated semantic `<article>` remaining available after rendering.

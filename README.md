@@ -12,6 +12,9 @@ Casimir 是一个面向个人工作流的 Chrome 扩展，连接论文阅读与 
 - **arXiv PDF 首次访问**：首次打开 arXiv 摘要页或匹配的 DAIR.AI 论文页时跳转到
   对应 PDF；从任意来源打开过该 PDF 后不再自动跳转。
 - **论文分屏**：在支持的论文页面旁创建 Chrome 原生分屏后，将新空白窗格打开为 ChatGPT。
+  同一目标窗格的重叠事件会合并处理，避免重复导航导致附件任务丢失。
+- **新分屏聚焦**：配对的 ChatGPT 输入框就绪后，通过短暂调试连接将焦点从地址栏移入
+  输入框；用户已切走或开始操作时跳过。需要 `debugger` 权限。
 - **论文附件传递**：把匹配的 arXiv、alphaXiv、Nature、ACL Anthology 或 OpenReview
   论文内容传给准确的 ChatGPT 标签页；alphaXiv 博客及 Nature 的 PDF 不适合直接
   获取时，使用当前页面的 MHTML 快照。
@@ -94,9 +97,12 @@ npm run package
 
 ## 权限与安全边界
 
+- `debugger`：对新建、活动且与论文配对的 ChatGPT 分屏短暂连接调试接口，
+  将焦点从地址栏移到输入框后断开。此权限本身具备广泛的网页读取和修改能力，
+  Chrome 可能显示调试提示；当前实现不读取对话内容。
 - `tabs`：读取标签页和 `splitViewId`，识别刚创建的分屏空白窗格，并只导航匹配窗格。
-- `pageCapture`：将已匹配的 X Article 或依赖当前页面访问状态的 Nature 文章保存为
-  内存中的 MHTML 快照，并为无法获取 PDF 的 alphaXiv 博客及 Nature 公开文章提供回退。
+- `pageCapture`：将已匹配的 X Article 保存为内存中的 MHTML 快照，并为无法获取 PDF
+  的 alphaXiv 博客及 Nature 文章提供回退。
 - `storage`：保存跨 arXiv 与 DAIR.AI 共享的 PDF 访问记录、自定义快捷键和短生命周期的
   PDF 交接任务。
 - `https://arxiv.org/*`：运行首次访问脚本、记录已经打开的 PDF，并由后台获取匹配的
@@ -106,8 +112,9 @@ npm run package
 - `https://www.alphaxiv.org/*`：读取论文页提供的正文 PDF 元数据及博客内容类型，并在
   必要时捕获页面。
 - `https://cdn.openai.com/*`：获取当前支持的 alphaXiv 博客明确链接的公开原始论文 PDF。
-- `https://www.nature.com/*`：读取文章正文下载入口；公开 PDF 优先直接获取，依赖当前
-  页面访问状态的文章则只捕获当前标签页已经渲染的内容。
+- `https://www.nature.com/*`：读取文章正文下载入口；所有严格匹配的 PDF 都先进行
+  无凭据、同站获取，并使用 Nature 的无 Cookie 回跳参数避免进入身份服务；无法得到
+  有效 PDF 时才捕获当前标签页已经渲染的内容。
 - `https://aclanthology.org/*`：读取并获取与当前论文 ID 完全匹配的公开正文 PDF；
   checklist 与其他附件不会被选中。
 - `https://openreview.net/*`：读取并获取与当前 forum ID 完全匹配的投稿 PDF；请求只向

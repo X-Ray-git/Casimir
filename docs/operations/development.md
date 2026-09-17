@@ -16,6 +16,10 @@ After changing extension files:
 3. Refresh existing ChatGPT and arXiv tabs so updated content scripts are injected.
 4. Repeat the target workflow.
 
+Reload means the circular-arrow control on the **Casimir card**, not the page's
+top-level **Update** button. For a fresh split test, opening a new source PDF and
+creating a new blank pane avoids reusing old content scripts or consumed tasks.
+
 Uninstalling is normally unnecessary and may clear local extension data.
 
 ## Verification
@@ -69,6 +73,18 @@ remains the canonical directory for unpacked development.
 - A progress or error status appears on ChatGPT.
 - No prompt is inserted and no message is sent.
 - Other already-open ChatGPT tabs receive no attachment.
+
+### New-pane composer focus
+
+- Keep the Casimir worker console open before creating the split; foreground the
+  source Chrome window while ChatGPT loads.
+- Without clicking ChatGPT, type disposable test text and confirm it enters the
+  composer rather than the address bar; clear the text without sending it.
+- Check focus, debugger detachment and attachment logs separately. A DOM-only
+  focus result or a successful PDF transfer does not replace the keyboard check.
+- Switching away or interacting during preparation must prevent late focus theft.
+- See the [investigation record](2026-09-17-split-view-investigation.md) for failed
+  approaches, test limitations and potential interference from other debuggers.
 
 ### shortcuts
 

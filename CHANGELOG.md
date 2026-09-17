@@ -7,6 +7,10 @@ were developed under the ChatFlow name.
 
 ### Added
 
+- Restore composer focus in newly paired ChatGPT panes through a short-lived
+  debugger connection, with exact-tab checks and cleanup. Requires the additional
+  `debugger` permission. The user reported success in Chrome on 2026-09-17;
+  worker logs confirmed focus, debugger detachment, and PDF transfer.
 - Attach PDFs from alphaXiv special-paper pages and publicly downloadable Nature
   articles through the existing exact-tab Split View workflow.
 - Prefer an alphaXiv blog's trusted original-paper link and fall back to an
@@ -21,6 +25,19 @@ were developed under the ChatFlow name.
 
 ### Fixed
 
+- Wait for the visible ChatGPT prompt as well as upload controls before requesting
+  browser focus, and keep the attachment port open until preparation finishes.
+  Report focus offers, readiness requests, and cancelled or timed-out preparation
+  in the service-worker console.
+- Preserve the arXiv source tab ID in attachment tasks so the browser-focus
+  handler can validate the split pairing before attaching its debugger.
+- Serialize Split View evaluation per target tab before asynchronous lookups,
+  preventing overlapping tab events from issuing duplicate navigations and
+  deleting the successful navigation's pending PDF upload task.
+- Try every strictly matched Nature body-PDF URL without credentials before
+  falling back to MHTML, so older open-access articles using a normal `.pdf`
+  path are transferred as PDFs; use Nature's same-origin no-cookie return hint
+  to avoid a cross-origin identity redirect.
 - Support Nature article pages whose PDF link depends on the reader's current
   institutional access by capturing the rendered page as MHTML, and fall back
   to the same exact-tab capture when a public Nature PDF cannot be fetched.

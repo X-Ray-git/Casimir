@@ -180,7 +180,7 @@ test("resolves Nature's article PDF download instead of citation metadata", () =
   );
 });
 
-test("resolves Nature's access-aware article PDF for MHTML capture", () => {
+test("resolves Nature's normal article PDF path", () => {
   const result = resolveFromPage({
     href: "https://www.nature.com/articles/s41591-026-04539-8",
     citationTitle: "Toward a test of medical AI superintelligence",
