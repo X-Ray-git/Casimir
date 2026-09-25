@@ -29,6 +29,9 @@ async function runPdfInjection({
   userInteracts = false,
   promptDelay = 0,
   visibilityTransition = null,
+  attachmentDelay = 0,
+  duplicateDone = false,
+  displayedFilename = filename,
 } = {}) {
   const dispatchedEvents = [];
   let attachmentVisible = false;
@@ -36,7 +39,7 @@ async function runPdfInjection({
   let ticks = 0;
   const listeners = new Map();
 
-  class FakeElement {}
+  class FakeElement { getAttribute() { return null; } }
   class FakeInput extends FakeElement {}
   const input = new FakeInput();
   input.type = "file";
@@ -53,16 +56,22 @@ async function runPdfInjection({
 
   const attachment = {
     getAttribute(name) {
-      return name === "aria-label" ? filename : null;
+      return name === "aria-label" ? displayedFilename : null;
     },
   };
   const prompt = { getClientRects: () => [{}] };
   const composer = {
+    querySelector(selector) {
+      if (selector.startsWith('#upload-files')) return input;
+      if (selector.startsWith('#prompt-textarea')) return ticks >= promptDelay ? prompt : null;
+      if (selector.startsWith('[data-testid="composer-plus-btn"]')) return plusButton;
+      return null;
+    },
     contains(candidate) {
       return candidate === input || candidate === prompt;
     },
     querySelectorAll() {
-      return attachmentVisible ? [attachment] : [];
+      return attachmentVisible && ticks >= attachmentDelay ? [attachment] : [];
     },
   };
   const plusButton = new FakeElement();
@@ -125,7 +134,7 @@ async function runPdfInjection({
       return id === "upload-files" ? input : null;
     },
     querySelector(selector) {
-      if (selector === 'form[data-type="unified-composer"]') return composer;
+      if (selector === 'form[data-type="unified-composer"], form[data-chatgpt-composer]') return composer;
       if (selector === '[data-testid="composer-plus-btn"]') return plusButton;
       return null;
     },
@@ -137,7 +146,7 @@ async function runPdfInjection({
   vm.runInNewContext(source, {
     atob,
     chrome: { runtime: { connect: () => port } },
-    console: { log() {}, error() {} },
+    console: { log() {}, error() {}, warn() {} },
     DataTransfer: FakeDataTransfer,
     Date,
     document,
@@ -179,6 +188,7 @@ async function runPdfInjection({
   });
   onMessage.emit({ type: "chunk", data: "JVBERg==" });
   onMessage.emit({ type: "done", totalBytes: 4 });
+  if (duplicateDone) onMessage.emit({ type: "done", totalBytes: 4 });
   for (let attempt = 0; attempt < 250 && !disconnected; attempt += 1) {
     await new Promise(setImmediate);
   }
@@ -205,13 +215,16 @@ test("confirms the transferred PDF in ChatGPT before reporting success", async (
   assert.equal(result.disconnected, true);
 });
 
-test("replays a missed ChatGPT file change event once", async () => {
-  const result = await runPdfInjection({ attachOnChange: 2 });
-
-  assert.equal(result.changeCount, 2);
-  assert.deepEqual(result.dispatchedEvents, ["input", "change", "change"]);
+test("waits for delayed confirmation without adding a second attachment", async () => {
+  const result = await runPdfInjection({ attachmentDelay: 50 });
+  assert.equal(result.changeCount, 1);
+  assert.deepEqual(result.dispatchedEvents, ["input", "change"]);
   assert.match(result.statusHost.textContent, /^PDF 已添加：/);
-  assert.equal(result.disconnected, true);
+});
+
+test("ignores duplicate transfer completion messages", async () => {
+  const result = await runPdfInjection({ duplicateDone: true });
+  assert.equal(result.changeCount, 1);
 });
 
 test("requests browser focus once only when offered and without page interaction", async () => {
@@ -261,14 +274,14 @@ test("attaches a captured alphaXiv MHTML file through the same input", async () 
   assert.match(result.statusHost.textContent, /^MHTML 已添加：/);
 });
 
-test("reports failure when ChatGPT never confirms the attachment", async () => {
+test("reports uncertain confirmation without retrying or claiming failure", async () => {
   const result = await runPdfInjection({ attachOnChange: Number.POSITIVE_INFINITY });
 
-  assert.equal(result.changeCount, 2);
-  assert.deepEqual(result.dispatchedEvents, ["input", "change", "change"]);
+  assert.equal(result.changeCount, 1);
+  assert.deepEqual(result.dispatchedEvents, ["input", "change"]);
   assert.equal(
     result.statusHost.textContent,
-    "PDF 添加失败：ChatGPT did not confirm the PDF attachment",
+    "PDF 已交给 ChatGPT，但未能确认附件卡片。请检查页面；为避免重复，未再次添加。",
   );
   assert.equal(result.disconnected, true);
 });
@@ -297,7 +310,7 @@ test("automatically hides a PDF fetch error after five seconds", () => {
   vm.runInNewContext(source, {
     atob,
     chrome: { runtime: { connect: () => port } },
-    console: { log() {}, error() {} },
+    console: { log() {}, error() {}, warn() {} },
     document: {
       documentElement: { appendChild() {} },
       createElement() {
@@ -332,4 +345,10 @@ test("automatically hides a PDF fetch error after five seconds", () => {
   timers[0].callback();
 
   assert.equal(removed, true);
+});
+
+test("confirms a filename uniquified by ChatGPT without replaying upload", async () => {
+  const result = await runPdfInjection({ filename: "sample.pdf", displayedFilename: "sample(5).pdf" });
+  assert.equal(result.changeCount, 1);
+  assert.match(result.statusHost.textContent, /^PDF 已添加：/);
 });

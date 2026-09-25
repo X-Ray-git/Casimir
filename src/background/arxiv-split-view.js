@@ -45,8 +45,9 @@ async function focusPairedComposer(targetTabId, task) {
     if (!await stillPairedAndActive()) return;
     const ready = await chrome.debugger.sendCommand(target, "Runtime.evaluate", {
       expression: `(() => {
-        const input = document.getElementById("prompt-textarea");
-        const composer = document.querySelector('form[data-type="unified-composer"]');
+        const input = document.querySelector('form[data-type="unified-composer"], form[data-chatgpt-composer]')?.querySelector(
+          '#prompt-textarea, [data-composer-markdown][contenteditable="true"][role="textbox"]');
+        const composer = document.querySelector('form[data-type="unified-composer"], form[data-chatgpt-composer]');
         const active = document.activeElement;
         return !document.hidden && !navigator.userActivation.hasBeenActive &&
           !!input && !!composer?.contains(input) && !!input.getClientRects().length &&
@@ -61,7 +62,8 @@ async function focusPairedComposer(targetTabId, task) {
     await chrome.debugger.sendCommand(target, "Page.bringToFront");
     const result = await chrome.debugger.sendCommand(target, "Runtime.evaluate", {
       expression: `(() => {
-        const input = document.getElementById("prompt-textarea");
+        const input = document.querySelector('form[data-type="unified-composer"], form[data-chatgpt-composer]')?.querySelector(
+          '#prompt-textarea, [data-composer-markdown][contenteditable="true"][role="textbox"]');
         if (!input || document.hidden || navigator.userActivation.hasBeenActive) return false;
         input.focus({preventScroll: true});
         return document.hasFocus() && document.activeElement === input;

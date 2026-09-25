@@ -32,7 +32,9 @@ npm run check
 ```
 
 The check command validates the Manifest and referenced files, checks JavaScript
-syntax, and runs the Node test suite.
+syntax, and runs the Node test suite. LinkeDOM is a development-only dependency
+for selector regression tests against a sanitized ChatGPT structural fixture;
+it is not loaded by the extension or included in the packaged extension.
 
 Run an individual layer when investigating a failure:
 

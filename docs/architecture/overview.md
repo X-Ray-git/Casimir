@@ -122,11 +122,23 @@ For a matching task, the script:
 
 1. Receives PDF or MHTML metadata and chunks.
 2. Reconstructs a browser `File` in memory.
-3. Waits for ChatGPT's unified composer and `#upload-files` input.
+3. Waits for the legacy unified composer or `form[data-chatgpt-composer]`, then selects its general file input (legacy `#upload-files` or an input without an `accept` restriction). Image/video-only pickers are excluded.
 4. Assigns the file with `DataTransfer`.
 5. Dispatches `input` and `change` so ChatGPT performs its normal upload.
-6. Confirms the semantic attachment tile appears, replaying one missed `change`
-   event before reporting a failure.
+6. Waits up to about 20 seconds for the semantic attachment tile. Missing DOM
+   confirmation produces an uncertainty notice, never an automatic replay of
+   `change`: the first event may already have added the file. Duplicate transfer
+   completion messages are ignored.
+
+The new layout uses `[data-composer-markdown][contenteditable="true"][role="textbox"]`
+inside `form[data-chatgpt-composer]` instead of `#prompt-textarea`. Content scripts
+and debugger focus expressions support both contracts. Attachment confirmation
+accepts the filename or its numbered variant (e.g. `paper(5).pdf`) as an
+`aria-label` on a group or a `button[type="button"]` inside the composer.
+The matching count must increase from the pre-upload baseline; existing cards,
+removal buttons and filenames elsewhere do not confirm the new attachment.
+Sidebar shortcuts also recognize buttons controlling `app-shell-sidebar` or
+`browser-sidebar-popover`, retaining the legacy selectors.
 
 It does not inspect conversation messages, fill the prompt, click the send button, or call a private ChatGPT upload endpoint.
 
@@ -170,7 +182,7 @@ service worker fetches the public PDF without credentials and streams chunks
     ├── X Article: capture exact source tab directly as MHTML
     │
     ▼
-File → DataTransfer → #upload-files → input/change
+File → DataTransfer → composer general file input → input/change
     │
     ▼
 ChatGPT displays and uploads the attachment
@@ -230,7 +242,7 @@ Attachment bytes travel only in extension memory from the supported source to th
 - alphaXiv, Nature, ACL Anthology, and OpenReview resolution depend on current
   metadata or semantic download-link contracts.
 - X Article support depends on its dedicated semantic `<article>` remaining available after rendering.
-- ChatGPT file attachment depends on the current `#upload-files` DOM contract.
+- ChatGPT file attachment depends on semantic composer/file-input DOM contracts; both the legacy and September 2026 layouts are supported.
 - ChatGPT keyboard actions depend on a small set of current test IDs and accessibility labels.
 - Automatic conversation-history rate-limit acknowledgement depends on its
   dedicated modal test ID and single-action dialog structure.

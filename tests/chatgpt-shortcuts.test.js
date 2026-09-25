@@ -96,6 +96,11 @@ async function createHarness({
       return null;
     },
     querySelectorAll(selector) {
+      if (selector === '#prompt-textarea' && promptInput) {
+        promptInput.closest = () => null;
+        promptInput.getClientRects = () => [{}];
+        return [promptInput];
+      }
       if (selector === '[data-testid="create-new-chat-button"][href="/"]') {
         return buttonElements;
       }

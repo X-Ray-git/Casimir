@@ -25,6 +25,18 @@ were developed under the ChatFlow name.
 
 ### Fixed
 
+- Recognize ChatGPT numbered attachment filenames, requiring a new matching card
+  after upload so existing attachments cannot falsely confirm success. The user
+  confirmed the success notice in a real split pane on 2026-09-25.
+
+- Stop replaying file-upload events when attachment confirmation times out; wait
+  longer and report uncertainty instead of a false failure. Ignore duplicate
+  transfer completion messages to avoid starting a second attachment attempt.
+
+- Support the September 2026 ChatGPT composer, generated file-input IDs,
+  filename-button attachment cards and new sidebar controls, while retaining
+  legacy layout support in shortcuts, attachment delivery and debugger focus.
+
 - Wait for the visible ChatGPT prompt as well as upload controls before requesting
   browser focus, and keep the attachment port open until preparation finishes.
   Report focus offers, readiness requests, and cancelled or timed-out preparation

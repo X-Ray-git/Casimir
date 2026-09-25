@@ -44,7 +44,10 @@
   }
 
   function getPromptInput() {
-    return document.getElementById("prompt-textarea");
+    return firstVisible([
+      '#prompt-textarea',
+      'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"][role="textbox"]',
+    ]);
   }
 
   function focusPrompt() {
@@ -99,6 +102,8 @@
 
   function findSidebarToggle() {
     return firstVisible([
+      'button[aria-controls="app-shell-sidebar"]',
+      'button[aria-controls="browser-sidebar-popover"]',
       '[data-testid="close-sidebar-button"]',
       '[data-testid="open-sidebar-button"]',
       '[aria-label="Close sidebar"]',
